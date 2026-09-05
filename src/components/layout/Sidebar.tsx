@@ -9,7 +9,6 @@ import {
   PenLine,
   Upload,
   MessageSquare,
-  AlertTriangle,
   ShieldCheck,
   History,
   FileText,
@@ -19,6 +18,7 @@ import {
   X,
   Sparkles,
   QrCode,
+  Headphones,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
@@ -53,6 +53,7 @@ export default function Sidebar({
     { label: 'Katalog Dataset', href: '/datasets', icon: <Database size={18} />, group: 'DATA STATISTIK' },
     { label: 'Input Data', href: '/input', icon: <PenLine size={18} />, group: 'DATA STATISTIK' },
     { label: 'Import Excel / CSV', href: '/import', icon: <Upload size={18} />, group: 'DATA STATISTIK' },
+    { label: 'CS Inbox & Tiket', href: '/cs', icon: <Headphones size={18} />, group: 'CHATBOT & LAYANAN' },
     { label: 'Template Chatbot', href: '/keywords', icon: <MessageSquare size={18} />, group: 'CHATBOT & LAYANAN' },
     { label: 'Koneksi Host WA', href: '/whatsapp', icon: <QrCode size={18} />, group: 'CHATBOT & LAYANAN' },
     { label: 'Verifikasi Data', href: '/issues', icon: <ShieldCheck size={18} />, group: 'KUALITAS & VALIDASI' },

@@ -357,12 +357,13 @@ interface TextareaFieldProps
   extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
   label?: string;
   error?: string;
+  hint?: string;
 }
 
 export const TextareaField = React.forwardRef<
   HTMLTextAreaElement,
   TextareaFieldProps
->(({ label, error, className, ...props }, ref) => {
+>(({ label, error, hint, className, ...props }, ref) => {
   return (
     <div className={cn('input-field', className)}>
       {label && (
@@ -377,6 +378,7 @@ export const TextareaField = React.forwardRef<
         {...props}
       />
       {error && <p className="input-error">{error}</p>}
+      {hint && !error && <p className="input-hint">{hint}</p>}
     </div>
   );
 });

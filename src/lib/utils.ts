@@ -24,6 +24,19 @@ export function formatDateShort(dateStr: string): string {
   });
 }
 
+export function formatTime(dateStr: string): string {
+  const date = new Date(dateStr);
+  return date.toLocaleTimeString('id-ID', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+}
+
+export function formatDateTime(dateStr: string): string {
+  return `${formatDateShort(dateStr)} ${formatTime(dateStr)}`;
+}
+
 export function formatNumber(value: number | null | undefined): string {
   if (value === null || value === undefined) return '-';
   return new Intl.NumberFormat('id-ID').format(value);
