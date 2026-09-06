@@ -933,24 +933,23 @@ function DataTab({
                   >
                     <Pencil size={13} />
                   </button>
-                  {dataset.status === DataStatus.DRAFT && (
-                    <button
-                      type="button"
-                      className="spreadsheet-delete-btn"
-                      title="Hapus baris data"
-                      onClick={() =>
-                        setConfirmAction({
-                          title: 'Hapus data ini?',
-                          description: `Data "${rec.indicator}" untuk periode ${rec.period} akan dihapus dari dataset.`,
-                          action: () => onDeleteRecord(rec.id),
-                          variant: 'danger',
-                          confirmLabel: 'Hapus Data',
-                        })
-                      }
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    className="spreadsheet-delete-btn"
+                    style={{ color: '#ef4444', background: '#fef2f2' }}
+                    title="Hapus baris data statistik"
+                    onClick={() =>
+                      setConfirmAction({
+                        title: 'Hapus baris data ini?',
+                        description: `Data "${rec.indicator}" untuk periode ${rec.period} (${formatNumber(rec.value)} ${rec.unit || dataset.unit}) akan dihapus dari dataset.`,
+                        action: () => onDeleteRecord(rec.id),
+                        variant: 'danger',
+                        confirmLabel: 'Hapus Data',
+                      })
+                    }
+                  >
+                    <Trash2 size={13} />
+                  </button>
                 </div>
               </td>
             </tr>

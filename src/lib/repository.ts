@@ -762,6 +762,11 @@ export const RecordRepo = {
     record.updated_by = userId;
     record.updated_at = new Date().toISOString();
 
+    const parentDs = getStore().datasets.find((d) => d.id === record.dataset_id);
+    if (parentDs) {
+      parentDs.record_count = getStore().records.filter((r) => r.dataset_id === parentDs.id && !r.is_deleted).length;
+    }
+
     AuditRepo.log({
       entity_type: 'record',
       entity_id: id,
