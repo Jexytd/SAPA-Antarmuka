@@ -6,6 +6,17 @@ import { useAuth } from '@/contexts/AuthContext';
 import AppLayout from '@/components/layout/AppLayout';
 import Header from '@/components/layout/Header';
 import { Button, Toast, EmptyState } from '@/components/ui';
+import { Badge } from '@/components/ui/badge';
+import { Card, CardContent } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
 import { UserRepo, DatasetRepo, subscribe } from '@/lib/repository';
 import { User, UserRole } from '@/lib/types';
 import { formatDate } from '@/lib/utils';
@@ -154,7 +165,7 @@ export default function UsersPage() {
       />
 
       <div className="page-content" style={{ maxWidth: 1180 }}>
-        {/* Modern Stats Bar */}
+        {/* Top Metric Overview */}
         <div
           style={{
             display: 'grid',
@@ -163,122 +174,95 @@ export default function UsersPage() {
             marginBottom: 24,
           }}
         >
-          <div
-            style={{
-              background: '#ffffff',
-              border: '1px solid var(--slate-200)',
-              borderRadius: 'var(--radius-xl)',
-              padding: '20px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 16,
-              boxShadow: 'var(--shadow-subtle)',
-            }}
-          >
-            <div
-              style={{
-                width: 48,
-                height: 48,
-                borderRadius: 'var(--radius-lg)',
-                background: 'linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%)',
-                color: '#ffffff',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                boxShadow: '0 4px 10px rgba(37, 99, 235, 0.25)',
-              }}
-            >
-              <UsersIcon size={22} />
-            </div>
-            <div>
-              <p style={{ fontSize: 13, color: 'var(--slate-500)', margin: 0, fontWeight: 500 }}>
-                Total Pengelola Data
-              </p>
-              <h3 style={{ fontSize: 24, fontWeight: 700, margin: '2px 0 0', color: 'var(--slate-900)' }}>
-                {users.length} Pegawai
-              </h3>
-            </div>
-          </div>
+          <Card className="p-0 border-slate-200">
+            <CardContent className="p-5 flex items-center gap-4">
+              <div
+                style={{
+                  width: 48,
+                  height: 48,
+                  borderRadius: 'var(--radius-lg)',
+                  background: 'linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%)',
+                  color: '#ffffff',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  boxShadow: '0 4px 10px rgba(37, 99, 235, 0.25)',
+                }}
+              >
+                <UsersIcon size={22} />
+              </div>
+              <div>
+                <p style={{ fontSize: 13, color: 'var(--slate-500)', margin: 0, fontWeight: 500 }}>
+                  Total Pengelola Data
+                </p>
+                <h3 style={{ fontSize: 24, fontWeight: 700, margin: '2px 0 0', color: 'var(--slate-900)' }}>
+                  {users.length} Pegawai
+                </h3>
+              </div>
+            </CardContent>
+          </Card>
 
-          <div
-            style={{
-              background: '#ffffff',
-              border: '1px solid var(--slate-200)',
-              borderRadius: 'var(--radius-xl)',
-              padding: '20px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 16,
-              boxShadow: 'var(--shadow-subtle)',
-            }}
-          >
-            <div
-              style={{
-                width: 48,
-                height: 48,
-                borderRadius: 'var(--radius-lg)',
-                background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
-                color: '#ffffff',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                boxShadow: '0 4px 10px rgba(16, 185, 129, 0.25)',
-              }}
-            >
-              <UserCheck size={22} />
-            </div>
-            <div>
-              <p style={{ fontSize: 13, color: 'var(--slate-500)', margin: 0, fontWeight: 500 }}>
-                Akses Pengelolaan
-              </p>
-              <h3 style={{ fontSize: 18, fontWeight: 700, margin: '2px 0 0', color: 'var(--slate-900)' }}>
-                Setara & Terpadu
-              </h3>
-              <span style={{ fontSize: 11.5, color: '#059669', fontWeight: 500 }}>
-                Semua akun dapat input & publikasi
-              </span>
-            </div>
-          </div>
+          <Card className="p-0 border-slate-200">
+            <CardContent className="p-5 flex items-center gap-4">
+              <div
+                style={{
+                  width: 48,
+                  height: 48,
+                  borderRadius: 'var(--radius-lg)',
+                  background: 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
+                  color: '#ffffff',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  boxShadow: '0 4px 10px rgba(16, 185, 129, 0.25)',
+                }}
+              >
+                <UserCheck size={22} />
+              </div>
+              <div>
+                <p style={{ fontSize: 13, color: 'var(--slate-500)', margin: 0, fontWeight: 500 }}>
+                  Akses Pengelolaan
+                </p>
+                <h3 style={{ fontSize: 18, fontWeight: 700, margin: '2px 0 0', color: 'var(--slate-900)' }}>
+                  Setara & Terpadu
+                </h3>
+                <span style={{ fontSize: 11.5, color: '#059669', fontWeight: 500 }}>
+                  Semua akun dapat input & publikasi
+                </span>
+              </div>
+            </CardContent>
+          </Card>
 
-          <div
-            style={{
-              background: '#ffffff',
-              border: '1px solid var(--slate-200)',
-              borderRadius: 'var(--radius-xl)',
-              padding: '20px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 16,
-              boxShadow: 'var(--shadow-subtle)',
-            }}
-          >
-            <div
-              style={{
-                width: 48,
-                height: 48,
-                borderRadius: 'var(--radius-lg)',
-                background: 'linear-gradient(135deg, #475569 0%, #334155 100%)',
-                color: '#ffffff',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                boxShadow: '0 4px 10px rgba(51, 65, 85, 0.2)',
-              }}
-            >
-              <Building2 size={22} />
-            </div>
-            <div>
-              <p style={{ fontSize: 13, color: 'var(--slate-500)', margin: 0, fontWeight: 500 }}>
-                Satuan Kerja BPS
-              </p>
-              <h3 style={{ fontSize: 18, fontWeight: 700, margin: '2px 0 0', color: 'var(--slate-900)' }}>
-                Bangka (Kode 1901)
-              </h3>
-              <span style={{ fontSize: 11.5, color: 'var(--slate-500)' }}>
-                Provinsi Kep. Bangka Belitung
-              </span>
-            </div>
-          </div>
+          <Card className="p-0 border-slate-200">
+            <CardContent className="p-5 flex items-center gap-4">
+              <div
+                style={{
+                  width: 48,
+                  height: 48,
+                  borderRadius: 'var(--radius-lg)',
+                  background: 'linear-gradient(135deg, #475569 0%, #334155 100%)',
+                  color: '#ffffff',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  boxShadow: '0 4px 10px rgba(51, 65, 85, 0.2)',
+                }}
+              >
+                <Building2 size={22} />
+              </div>
+              <div>
+                <p style={{ fontSize: 13, color: 'var(--slate-500)', margin: 0, fontWeight: 500 }}>
+                  Satuan Kerja BPS
+                </p>
+                <h3 style={{ fontSize: 18, fontWeight: 700, margin: '2px 0 0', color: 'var(--slate-900)' }}>
+                  Bangka (Kode 1901)
+                </h3>
+                <span style={{ fontSize: 11.5, color: 'var(--slate-500)' }}>
+                  Kabupaten Bangka
+                </span>
+              </div>
+            </CardContent>
+          </Card>
         </div>
 
         {/* Section List Pengguna */}
@@ -296,15 +280,14 @@ export default function UsersPage() {
             <div style={{ position: 'relative', width: 280 }}>
               <Search
                 size={15}
-                style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--slate-400)' }}
+                style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--slate-400)', zIndex: 1 }}
               />
-              <input
+              <Input
                 type="text"
-                className="text-input"
                 placeholder="Cari nama atau email..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                style={{ paddingLeft: 36, height: 38, fontSize: 13 }}
+                className="pl-9 h-9 text-xs"
               />
             </div>
           </div>
@@ -477,115 +460,72 @@ export default function UsersPage() {
       </div>
 
       {/* Modal Add / Edit User */}
-      {isModalOpen && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(15, 23, 42, 0.6)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 999,
-            padding: 16,
-            backdropFilter: 'blur(3px)',
-          }}
-          onClick={() => setIsModalOpen(false)}
-        >
-          <div
-            style={{
-              background: '#ffffff',
-              borderRadius: 'var(--radius-xl)',
-              maxWidth: 500,
-              width: '100%',
-              padding: '24px',
-              boxShadow: 'var(--shadow-xl)',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <div>
-                <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: 'var(--slate-900)' }}>
-                  {editingUser ? 'Edit Akun Pengelola' : 'Tambah Pengelola Data Baru'}
-                </h3>
-                <p style={{ margin: '4px 0 0', fontSize: 12.5, color: 'var(--slate-500)' }}>
-                  Setiap akun memiliki hak akses setara untuk mengelola dan mempublikasikan data
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsModalOpen(false)}
-                style={{ background: 'transparent', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--slate-400)' }}
-              >
-                ✕
-              </button>
+      <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>
+              {editingUser ? 'Edit Akun Pengelola' : 'Tambah Pengelola Data Baru'}
+            </DialogTitle>
+            <DialogDescription>
+              Setiap akun memiliki hak akses setara untuk mengelola dan mempublikasikan data
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleSaveUser} className="space-y-4">
+            <div>
+              <label className="input-label mb-1.5 block text-xs font-semibold" htmlFor="uname">
+                Nama Lengkap Pegawai<span className="text-red-500 ml-0.5">*</span>
+              </label>
+              <Input
+                id="uname"
+                type="text"
+                required
+                placeholder="Contoh: Rahmat Hidayat, S.Tr.Stat."
+                value={formName}
+                onChange={(e) => setFormName(e.target.value)}
+                autoFocus
+                className="text-xs h-9"
+              />
             </div>
 
-            <form onSubmit={handleSaveUser}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                <div>
-                  <label className="input-label" htmlFor="uname">
-                    Nama Lengkap Pegawai<span className="input-required">*</span>
-                  </label>
-                  <input
-                    id="uname"
-                    type="text"
-                    required
-                    className="text-input"
-                    placeholder="Contoh: Rahmat Hidayat, S.Tr.Stat."
-                    value={formName}
-                    onChange={(e) => setFormName(e.target.value)}
-                    autoFocus
-                  />
-                </div>
+            <div>
+              <label className="input-label mb-1.5 block text-xs font-semibold" htmlFor="uemail">
+                Alamat Email BPS / Resmi<span className="text-red-500 ml-0.5">*</span>
+              </label>
+              <Input
+                id="uemail"
+                type="email"
+                required
+                placeholder="Contoh: rahmat.hidayat@bps.go.id"
+                value={formEmail}
+                onChange={(e) => setFormEmail(e.target.value)}
+                className="text-xs h-9"
+              />
+            </div>
 
-                <div>
-                  <label className="input-label" htmlFor="uemail">
-                    Alamat Email BPS / Resmi<span className="input-required">*</span>
-                  </label>
-                  <input
-                    id="uemail"
-                    type="email"
-                    required
-                    className="text-input"
-                    placeholder="Contoh: rahmat.hidayat@bps.go.id"
-                    value={formEmail}
-                    onChange={(e) => setFormEmail(e.target.value)}
-                  />
-                </div>
-
-                <div
-                  style={{
-                    background: '#f8fafc',
-                    border: '1px solid var(--slate-200)',
-                    borderRadius: 'var(--radius-md)',
-                    padding: '12px 14px',
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                    <CheckCircle2 size={15} color="#10b981" />
-                    <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--slate-800)' }}>
-                      Tipe Akun: Pengelola Data Statistik
-                    </span>
-                  </div>
-                  <p style={{ fontSize: 11.5, color: 'var(--slate-500)', margin: 0, lineHeight: 1.4 }}>
-                    Akun ini dapat menambah, mengedit, mengimpor, memverifikasi data, dan mempublikasikan data statistik tanpa batasan peran terpisah.
-                  </p>
-                </div>
+            <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
+              <div className="flex items-center gap-2 mb-1">
+                <CheckCircle2 size={15} className="text-emerald-500" />
+                <span className="text-xs font-semibold text-slate-800">
+                  Tipe Akun: Pengelola Data Statistik
+                </span>
               </div>
+              <p className="text-[11px] text-slate-500 m-0 leading-relaxed">
+                Akun ini dapat menambah, mengedit, mengimpor, memverifikasi data, dan mempublikasikan data statistik tanpa batasan peran terpisah.
+              </p>
+            </div>
 
-              <div className="form-actions" style={{ marginTop: 24 }}>
-                <Button variant="secondary" type="button" onClick={() => setIsModalOpen(false)}>
-                  Batal
-                </Button>
-                <Button type="submit" loading={isSaving} icon={<Sparkles size={14} />}>
-                  {editingUser ? 'Simpan Perubahan' : 'Daftarkan Pengelola'}
-                </Button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+            <DialogFooter className="pt-2 gap-2 sm:gap-2">
+              <Button variant="secondary" type="button" onClick={() => setIsModalOpen(false)}>
+                Batal
+              </Button>
+              <Button type="submit" loading={isSaving} icon={<Sparkles size={14} />}>
+                {editingUser ? 'Simpan Perubahan' : 'Daftarkan Pengelola'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {toast && (
         <Toast

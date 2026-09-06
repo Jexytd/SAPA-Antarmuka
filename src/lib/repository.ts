@@ -108,6 +108,7 @@ export interface BackendConnectionState {
   isSyncing: boolean;
   lastSyncedAt: Date | null;
   targetUrl: string;
+  hasCheckedInitial: boolean;
 }
 
 let connectionState: BackendConnectionState = {
@@ -115,6 +116,7 @@ let connectionState: BackendConnectionState = {
   isSyncing: false,
   lastSyncedAt: null,
   targetUrl: '',
+  hasCheckedInitial: false,
 };
 
 type ConnectionListener = (state: BackendConnectionState) => void;
@@ -146,8 +148,8 @@ const pendingDeletedRecords = new Set<string>();
 /**
  * Sinkronisasi data real-time dua arah dengan backend Express / db_store.json
  */
-export async function syncWithBackend(): Promise<void> {
-  if (typeof window === 'undefined' || isSyncing) return;
+export async function syncWithBackend(): Promise<boolean> {
+  if (typeof window === 'undefined' || isSyncing) return connectionState.isConnected;
   isSyncing = true;
   updateBackendStatus({ isSyncing: true });
 
@@ -179,8 +181,8 @@ export async function syncWithBackend(): Promise<void> {
       if (Array.isArray(syncRes.auditLogs)) currentStore.auditLogs = syncRes.auditLogs;
 
       notify();
-      updateBackendStatus({ isConnected: true, isSyncing: false, lastSyncedAt: new Date() });
-      return;
+      updateBackendStatus({ isConnected: true, isSyncing: false, lastSyncedAt: new Date(), hasCheckedInitial: true });
+      return true;
     }
 
     // 2. Fallback REST API individual jika endpoint sync khusus belum merespons
@@ -196,11 +198,15 @@ export async function syncWithBackend(): Promise<void> {
     let hasChanges = false;
 
     if (datasets && datasets.length > 0) {
-      currentStore.datasets = datasets;
+      const validDatasets = datasets.filter((d) => !pendingDeletedDatasets.has(d.id));
+      currentStore.datasets = validDatasets;
       hasChanges = true;
     }
     if (records && records.length > 0) {
-      currentStore.records = records;
+      const validRecords = records.filter(
+        (r) => !pendingDeletedRecords.has(r.id) && !pendingDeletedDatasets.has(r.dataset_id)
+      );
+      currentStore.records = validRecords;
       hasChanges = true;
     }
     if (reviews && reviews.length > 0) {
@@ -227,13 +233,16 @@ export async function syncWithBackend(): Promise<void> {
     }
 
     if (isLive) {
-      updateBackendStatus({ isConnected: true, isSyncing: false, lastSyncedAt: new Date() });
+      updateBackendStatus({ isConnected: true, isSyncing: false, lastSyncedAt: new Date(), hasCheckedInitial: true });
+      return true;
     } else {
-      updateBackendStatus({ isConnected: false, isSyncing: false });
+      updateBackendStatus({ isConnected: false, isSyncing: false, hasCheckedInitial: true });
+      return false;
     }
   } catch (err) {
     console.warn('[Backend Sync] Menggunakan data lokal (backend offline):', err);
-    updateBackendStatus({ isConnected: false, isSyncing: false });
+    updateBackendStatus({ isConnected: false, isSyncing: false, hasCheckedInitial: true });
+    return false;
   } finally {
     isSyncing = false;
   }
@@ -535,7 +544,7 @@ export const DatasetRepo = {
     return s.datasets[index];
   },
 
-  delete(id: string, userId: string, userName: string): boolean {
+  async delete(id: string, userId: string, userName: string): Promise<boolean> {
     const s = getStore();
     const index = s.datasets.findIndex((d) => d.id === id);
     if (index === -1) return false;
@@ -560,9 +569,18 @@ export const DatasetRepo = {
       reason: 'Dataset dihapus oleh pengguna karena salah buat',
     });
 
-    BackendApi.deleteDataset(id).catch(() => {});
     notify();
-    syncWithBackend().catch(() => {});
+
+    try {
+      await BackendApi.deleteDataset(id);
+    } catch (e) {
+      console.error('[DatasetRepo.delete] Gagal menghapus dataset di backend:', e);
+    } finally {
+      setTimeout(() => {
+        pendingDeletedDatasets.delete(id);
+      }, 5000);
+    }
+
     return true;
   },
 };
@@ -735,7 +753,7 @@ export const RecordRepo = {
     return s.records[index];
   },
 
-  delete(id: string, userId: string, userName: string): boolean {
+  async delete(id: string, userId: string, userName: string): Promise<boolean> {
     const record = getStore().records.find((r) => r.id === id);
     if (!record) return false;
 
@@ -754,9 +772,18 @@ export const RecordRepo = {
       user_name: userName,
     });
 
-    BackendApi.deleteRecord(id).catch(() => {});
     notify();
-    syncWithBackend().catch(() => {});
+
+    try {
+      await BackendApi.deleteRecord(id);
+    } catch (e) {
+      console.error('[RecordRepo.delete] Gagal menghapus record di backend:', e);
+    } finally {
+      setTimeout(() => {
+        pendingDeletedRecords.delete(id);
+      }, 5000);
+    }
+
     return true;
   },
 

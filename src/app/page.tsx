@@ -6,11 +6,15 @@ import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import AppLayout from '@/components/layout/AppLayout';
 import Header from '@/components/layout/Header';
-import { Button, StatusBadge, StatCard, TableSkeleton } from '@/components/ui';
+import { Button, StatusBadge, StatCard, TableSkeleton, ServerOfflineState } from '@/components/ui';
 import {
   getDashboardSummary,
   DatasetRepo,
   subscribe,
+  getBackendStatus,
+  subscribeBackendStatus,
+  syncWithBackend,
+  BackendConnectionState,
 } from '@/lib/repository';
 import { Dataset, DashboardSummary } from '@/lib/types';
 import { formatDateShort, formatNumber } from '@/lib/utils';
@@ -31,7 +35,13 @@ import {
 export default function DashboardPage() {
   const { user, isAuthenticated, isLoading } = useAuth();
   const router = useRouter();
+
+  const [backendState, setBackendState] = useState<BackendConnectionState>(() => getBackendStatus());
+  const [isRetrying, setIsRetrying] = useState(false);
+
   const [summary, setSummary] = useState<DashboardSummary | null>(() => {
+    const status = getBackendStatus();
+    if (status.hasCheckedInitial && !status.isConnected) return null;
     try {
       return getDashboardSummary();
     } catch {
@@ -39,6 +49,8 @@ export default function DashboardPage() {
     }
   });
   const [recentDatasets, setRecentDatasets] = useState<Dataset[]>(() => {
+    const status = getBackendStatus();
+    if (status.hasCheckedInitial && !status.isConnected) return [];
     try {
       const all = DatasetRepo.getAll();
       return [...all].sort(
@@ -60,6 +72,13 @@ export default function DashboardPage() {
     }
 
     function loadData() {
+      const currentStatus = getBackendStatus();
+      if (currentStatus.hasCheckedInitial && !currentStatus.isConnected) {
+        setSummary(null);
+        setRecentDatasets([]);
+        setLoading(false);
+        return;
+      }
       setSummary(getDashboardSummary());
       const all = DatasetRepo.getAll();
       const sorted = [...all].sort(
@@ -70,11 +89,68 @@ export default function DashboardPage() {
       setLoading(false);
     }
 
-    const unsub = subscribe(loadData);
-    return unsub;
+    const unsubRepo = subscribe(loadData);
+    const unsubStatus = subscribeBackendStatus((state) => {
+      setBackendState(state);
+      if (state.isConnected) {
+        setSummary(getDashboardSummary());
+        const all = DatasetRepo.getAll();
+        const sorted = [...all].sort(
+          (a, b) =>
+            new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+        );
+        setRecentDatasets(sorted.slice(0, 6));
+      } else if (state.hasCheckedInitial) {
+        setSummary(null);
+        setRecentDatasets([]);
+      }
+    });
+
+    if (!getBackendStatus().hasCheckedInitial) {
+      syncWithBackend().finally(() => {
+        loadData();
+      });
+    } else {
+      loadData();
+    }
+
+    return () => {
+      unsubRepo();
+      unsubStatus();
+    };
   }, [isAuthenticated, isLoading, router]);
 
+  const handleRetry = async () => {
+    setIsRetrying(true);
+    try {
+      await syncWithBackend();
+    } finally {
+      setIsRetrying(false);
+    }
+  };
+
+  const isOffline = backendState.hasCheckedInitial && !backendState.isConnected;
+
   if (isLoading || !isAuthenticated) return null;
+
+  if (isOffline) {
+    return (
+      <AppLayout>
+        <Header
+          title="Dashboard"
+          subtitle="Pusat Kendali Data Makro BPS Kabupaten Bangka"
+        />
+        <div className="page-content" style={{ padding: '24px 16px' }}>
+          <ServerOfflineState
+            title="Server Backend Sedang Offline"
+            message="Data dashboard tidak dapat ditampilkan karena server backend tidak aktif atau offline, dan database saat ini masih menggunakan penyimpanan lokal."
+            onRetry={handleRetry}
+            isRetrying={isRetrying}
+          />
+        </div>
+      </AppLayout>
+    );
+  }
 
   return (
     <AppLayout>
@@ -113,7 +189,7 @@ function PageContent({
       <Header
         title="Dashboard"
         subtitle="Pusat Kendali Data Makro BPS Kabupaten Bangka"
-        onMobileMenuOpen={onMobileMenuOpen || (() => {})}
+        onMobileMenuOpen={onMobileMenuOpen || (() => { })}
         actions={
           <Link href="/input">
             <Button variant="primary" size="sm" icon={<Plus size={14} />}>
@@ -127,8 +203,7 @@ function PageContent({
         {/* Welcome Hero Banner */}
         <div className="welcome-banner">
           <div>
-            <div className="welcome-banner-tag">Sistem Manajemen Terpadu</div>
-            <h1 className="welcome-banner-title">Selamat datang, {userName}</h1>
+            <h1 className="welcome-banner-title">Halo, {userName}</h1>
             <p className="welcome-banner-desc">
               Kelola, input, validasi, dan pantau publikasi dataset statistik makro Kabupaten Bangka secara akurat dan terstruktur.
             </p>
@@ -195,7 +270,7 @@ function PageContent({
                   iconColor="emerald"
                   href="/datasets?status=PUBLISHED"
                   footerText="Telah disetujui & live"
-                  trendText="100% Siap"
+                  trendText="Kelola →"
                 />
                 <StatCard
                   label="Data Draf (Draft)"

@@ -63,12 +63,13 @@ export function getEffectiveBackendUrl(): string {
   return '';
 }
 
-async function safeFetch<T>(url: string, options?: RequestInit): Promise<T | null> {
+async function safeFetch<T>(url: string, options?: RequestInit & { timeoutMs?: number }): Promise<T | null> {
+  const { timeoutMs = 6000, ...fetchOptions } = options || {};
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'ngrok-skip-browser-warning': 'true',
     ...(API_KEY ? { 'x-api-key': API_KEY } : {}),
-    ...(options?.headers as Record<string, string> || {}),
+    ...((fetchOptions.headers as Record<string, string>) || {}),
   };
 
   // Pastikan URL terbentuk secara valid:
@@ -82,12 +83,17 @@ async function safeFetch<T>(url: string, options?: RequestInit): Promise<T | nul
     fullUrl = BASE_URL ? `${BASE_URL}${cleanPath}` : cleanPath;
   }
 
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
     const res = await fetch(fullUrl, {
       cache: 'no-store',
-      ...options,
+      signal: fetchOptions.signal || controller.signal,
+      ...fetchOptions,
       headers,
     });
+    clearTimeout(timeoutId);
 
     if (res.ok) {
       const json = await res.json();
@@ -97,6 +103,7 @@ async function safeFetch<T>(url: string, options?: RequestInit): Promise<T | nul
     console.warn(`[API] HTTP ${res.status} pada ${fullUrl}`);
     return null;
   } catch (err) {
+    clearTimeout(timeoutId);
     console.error(`[API Network Error] Gagal menghubungi backend di ${fullUrl}:`, err);
     return null;
   }

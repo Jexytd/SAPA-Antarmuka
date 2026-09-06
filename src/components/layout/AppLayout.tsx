@@ -5,9 +5,15 @@ import Sidebar from './Sidebar';
 import { cn } from '@/lib/utils';
 
 export const MobileMenuContext = createContext<{
+  isOpen: boolean;
   openMobileMenu: () => void;
+  closeMobileMenu: () => void;
+  toggleMobileMenu: () => void;
 }>({
+  isOpen: false,
   openMobileMenu: () => {},
+  closeMobileMenu: () => {},
+  toggleMobileMenu: () => {},
 });
 
 export function useMobileMenu() {
@@ -20,9 +26,17 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   const openMobileMenu = () => setMobileOpen(true);
   const closeMobileMenu = () => setMobileOpen(false);
+  const toggleMobileMenu = () => setMobileOpen((prev) => !prev);
 
   return (
-    <MobileMenuContext.Provider value={{ openMobileMenu }}>
+    <MobileMenuContext.Provider
+      value={{
+        isOpen: mobileOpen,
+        openMobileMenu,
+        closeMobileMenu,
+        toggleMobileMenu,
+      }}
+    >
       <div className="app-layout">
         <Sidebar
           collapsed={collapsed}

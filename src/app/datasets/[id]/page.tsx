@@ -16,12 +16,17 @@ import {
   TableSkeleton,
 } from '@/components/ui';
 import EditDatasetModal from '@/components/datasets/EditDatasetModal';
+import DatasetRecordDrawer from '@/components/datasets/DatasetRecordDrawer';
 import {
   DatasetRepo,
   RecordRepo,
   ReviewRepo,
   AuditRepo,
   subscribe,
+  subscribeBackendStatus,
+  getBackendStatus,
+  syncWithBackend,
+  BackendConnectionState,
 } from '@/lib/repository';
 import {
   Dataset,
@@ -49,6 +54,9 @@ import {
   Sparkles,
   Pencil,
   AlertCircle,
+  AlertTriangle,
+  ServerOff,
+  RefreshCw,
 } from 'lucide-react';
 
 interface ConfirmAction {
@@ -65,26 +73,37 @@ export default function DatasetDetailPage() {
   const params = useParams();
   const datasetId = params.id as string;
 
+  const [backendState, setBackendState] = useState<BackendConnectionState>(() => getBackendStatus());
+  const [isRetrying, setIsRetrying] = useState(false);
   const [dataset, setDataset] = useState<Dataset | null>(() => {
-    try {
-      return DatasetRepo.getById(datasetId) || null;
-    } catch {
-      return null;
+    if (getBackendStatus().isConnected) {
+      try {
+        return DatasetRepo.getById(datasetId) || null;
+      } catch {
+        return null;
+      }
     }
+    return null;
   });
   const [records, setRecords] = useState<DataRecord[]>(() => {
-    try {
-      return RecordRepo.getByDataset(datasetId);
-    } catch {
-      return [];
+    if (getBackendStatus().isConnected) {
+      try {
+        return RecordRepo.getByDataset(datasetId);
+      } catch {
+        return [];
+      }
     }
+    return [];
   });
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => {
-    try {
-      return AuditRepo.getByDataset(datasetId);
-    } catch {
-      return [];
+    if (getBackendStatus().isConnected) {
+      try {
+        return AuditRepo.getByDataset(datasetId);
+      } catch {
+        return [];
+      }
     }
+    return [];
   });
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<TabValue>('data');
@@ -94,10 +113,16 @@ export default function DatasetDetailPage() {
   const [isEditingDataset, setIsEditingDataset] = useState(false);
 
   const loadData = useCallback(() => {
-    const ds = DatasetRepo.getById(datasetId);
-    setDataset(ds || null);
-    setRecords(RecordRepo.getByDataset(datasetId));
-    setAuditLogs(AuditRepo.getByDataset(datasetId));
+    if (getBackendStatus().isConnected) {
+      const ds = DatasetRepo.getById(datasetId);
+      setDataset(ds || null);
+      setRecords(RecordRepo.getByDataset(datasetId));
+      setAuditLogs(AuditRepo.getByDataset(datasetId));
+    } else {
+      setDataset(null);
+      setRecords([]);
+      setAuditLogs([]);
+    }
     setLoading(false);
   }, [datasetId]);
 
@@ -108,9 +133,50 @@ export default function DatasetDetailPage() {
       router.push('/login');
       return;
     }
-    const unsub = subscribe(loadData);
-    return unsub;
+
+    const unsubBackend = subscribeBackendStatus((state) => {
+      setBackendState(state);
+      if (state.isConnected) {
+        loadData();
+      } else if (state.hasCheckedInitial) {
+        setDataset(null);
+        setRecords([]);
+        setAuditLogs([]);
+      }
+    });
+
+    if (!getBackendStatus().hasCheckedInitial) {
+      setLoading(true);
+      syncWithBackend().finally(() => {
+        setLoading(false);
+      });
+    }
+
+    const unsubRepo = subscribe(loadData);
+    return () => {
+      unsubBackend();
+      unsubRepo();
+    };
   }, [isAuthenticated, isLoading, router, loadData]);
+
+  const handleRetryBackend = async () => {
+    setIsRetrying(true);
+    try {
+      const isLive = await syncWithBackend();
+      if (isLive) {
+        loadData();
+        setToast({ msg: 'Berhasil terhubung ke server backend!', type: 'success' });
+      } else {
+        setDataset(null);
+        setToast({ msg: 'Server backend masih offline atau belum dapat dihubungi.', type: 'error' });
+      }
+    } catch {
+      setDataset(null);
+      setToast({ msg: 'Gagal menghubungi server backend.', type: 'error' });
+    } finally {
+      setIsRetrying(false);
+    }
+  };
 
   const handleStatusChange = (newStatus: DataStatus, reason?: string) => {
     if (!user || !dataset) return;
@@ -139,9 +205,10 @@ export default function DatasetDetailPage() {
     setConfirmAction(null);
   };
 
-  const handleDeleteRecord = (recordId: string) => {
+  const handleDeleteRecord = async (recordId: string) => {
     if (!user) return;
-    RecordRepo.delete(recordId, user.id, user.name);
+    await RecordRepo.delete(recordId, user.id, user.name);
+    loadData();
     setToast({ msg: 'Data berhasil dihapus.', type: 'success' });
   };
 
@@ -161,6 +228,7 @@ export default function DatasetDetailPage() {
       user.name,
       reason
     );
+    loadData();
     setToast({
       msg: `Data ${editingRecord.indicator} (${data.period}) berhasil dikoreksi!`,
       type: 'success',
@@ -168,10 +236,11 @@ export default function DatasetDetailPage() {
     setEditingRecord(null);
   };
 
-  const handleDeleteDataset = () => {
+  const handleDeleteDataset = async () => {
     if (!user || !dataset) return;
     try {
-      DatasetRepo.delete(dataset.id, user.id, user.name);
+      setConfirmAction(null);
+      await DatasetRepo.delete(dataset.id, user.id, user.name);
       router.push('/datasets');
     } catch {
       setToast({ msg: 'Gagal menghapus dataset.', type: 'error' });
@@ -187,6 +256,9 @@ export default function DatasetDetailPage() {
         records={records}
         auditLogs={auditLogs}
         loading={loading}
+        backendState={backendState}
+        isRetrying={isRetrying}
+        onRetryBackend={handleRetryBackend}
         activeTab={activeTab}
         onTabChange={(t) => setActiveTab(t as TabValue)}
         isReviewer={isReviewer}
@@ -259,6 +331,9 @@ function PageContent({
   records,
   auditLogs,
   loading,
+  backendState,
+  isRetrying,
+  onRetryBackend,
   activeTab,
   onTabChange,
   isReviewer,
@@ -275,6 +350,9 @@ function PageContent({
   records: DataRecord[];
   auditLogs: AuditLog[];
   loading: boolean;
+  backendState: BackendConnectionState;
+  isRetrying: boolean;
+  onRetryBackend: () => void;
   activeTab: TabValue;
   onTabChange: (tab: string) => void;
   isReviewer: boolean;
@@ -287,7 +365,12 @@ function PageContent({
   onDeleteDataset: () => void;
   onMobileMenuOpen?: () => void;
 }) {
-  if (loading) {
+  const isChecking = loading || (!backendState.hasCheckedInitial && backendState.isSyncing);
+  const isOffline = backendState.hasCheckedInitial && !backendState.isConnected;
+  const { user } = useAuth();
+  const [isInputDrawerOpen, setIsInputDrawerOpen] = useState(false);
+
+  if (isChecking) {
     return (
       <>
         <Header
@@ -295,7 +378,135 @@ function PageContent({
           onMobileMenuOpen={onMobileMenuOpen || (() => {})}
         />
         <div className="page-content">
+          <div
+            style={{
+              marginBottom: 16,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              color: '#64748b',
+              fontSize: 13,
+              fontWeight: 500,
+            }}
+          >
+            <RefreshCw size={14} className="animate-spin text-blue-600" />
+            <span>Memeriksa status koneksi server backend...</span>
+          </div>
           <TableSkeleton rows={6} cols={5} />
+        </div>
+      </>
+    );
+  }
+
+  if (isOffline) {
+    return (
+      <>
+        <Header
+          title="Detail Dataset"
+          backHref="/datasets"
+          onMobileMenuOpen={onMobileMenuOpen || (() => {})}
+        />
+        <div className="page-content">
+          <div
+            style={{
+              maxWidth: 620,
+              margin: '36px auto',
+              padding: '40px 32px',
+              borderRadius: 16,
+              background: '#ffffff',
+              border: '1px solid #fee2e2',
+              boxShadow: '0 10px 25px -5px rgba(239, 68, 68, 0.06)',
+              textAlign: 'center',
+            }}
+          >
+            <div
+              style={{
+                width: 64,
+                height: 64,
+                borderRadius: 16,
+                background: '#fef2f2',
+                border: '1px solid #fecaca',
+                color: '#ef4444',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                margin: '0 auto 16px',
+              }}
+            >
+              <ServerOff size={32} />
+            </div>
+
+            <div
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '4px 12px',
+                borderRadius: 9999,
+                background: '#fee2e2',
+                color: '#b91c1c',
+                fontSize: 12,
+                fontWeight: 600,
+                marginBottom: 12,
+              }}
+            >
+              <span
+                style={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: '50%',
+                  background: '#ef4444',
+                }}
+              />
+              Server Offline
+            </div>
+
+            <h2 style={{ fontSize: 20, fontWeight: 700, color: '#1e293b', marginBottom: 10 }}>
+              Server Backend Sedang Offline
+            </h2>
+
+            <p style={{ fontSize: 14, color: '#64748b', lineHeight: 1.6, marginBottom: 20 }}>
+              Data detail dan record dataset tidak ditampilkan karena server backend tidak aktif atau offline, dan database saat ini masih menggunakan penyimpanan lokal.
+            </p>
+
+            <div
+              style={{
+                padding: '12px 16px',
+                borderRadius: 10,
+                background: '#fffbeb',
+                border: '1px solid #fde68a',
+                color: '#b45309',
+                fontSize: 13,
+                lineHeight: 1.5,
+                marginBottom: 24,
+                textAlign: 'left',
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 10,
+              }}
+            >
+              <AlertTriangle size={18} style={{ flexShrink: 0, marginTop: 2, color: '#d97706' }} />
+              <div>
+                <strong>Perhatian:</strong> Layanan backend diperlukan untuk menampilkan angka dan riwayat audit dataset resmi secara akurat.
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+              <Button
+                variant="primary"
+                icon={<RefreshCw size={14} className={isRetrying ? 'animate-spin' : ''} />}
+                loading={isRetrying}
+                onClick={onRetryBackend}
+              >
+                Coba Hubungkan Kembali
+              </Button>
+              <Link href="/datasets">
+                <Button variant="secondary" icon={<ArrowLeft size={14} />}>
+                  Kembali ke Katalog
+                </Button>
+              </Link>
+            </div>
+          </div>
         </div>
       </>
     );
@@ -341,11 +552,14 @@ function PageContent({
 
       {dataset.status === DataStatus.DRAFT && (
         <>
-          <Link href={`/input?dataset=${dataset.id}`}>
-            <Button variant="secondary" size="sm" icon={<Plus size={14} />}>
-              Tambah Data
-            </Button>
-          </Link>
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<Plus size={14} />}
+            onClick={() => setIsInputDrawerOpen(true)}
+          >
+            Tambah Data
+          </Button>
           <Button
             variant="success"
             size="sm"
@@ -404,11 +618,14 @@ function PageContent({
       )}
       {dataset.status === DataStatus.PUBLISHED && (
         <>
-          <Link href={`/input?dataset=${dataset.id}`}>
-            <Button variant="secondary" size="sm" icon={<Plus size={14} />}>
-              Tambah Baris Data Baru
-            </Button>
-          </Link>
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<Plus size={14} />}
+            onClick={() => setIsInputDrawerOpen(true)}
+          >
+            Tambah Baris Data Baru
+          </Button>
           <Button
             variant="secondary"
             size="sm"
@@ -587,6 +804,7 @@ function PageContent({
               onDeleteRecord={onDeleteRecord}
               onEditRecord={onEditRecord}
               setConfirmAction={setConfirmAction}
+              onAddRecord={() => setIsInputDrawerOpen(true)}
             />
           )}
           {activeTab === 'metadata' && (
@@ -595,6 +813,16 @@ function PageContent({
           {activeTab === 'history' && <HistoryTab logs={auditLogs} />}
         </div>
       </div>
+
+      <DatasetRecordDrawer
+        isOpen={isInputDrawerOpen}
+        onClose={() => setIsInputDrawerOpen(false)}
+        dataset={dataset}
+        user={user}
+        onRecordAdded={() => {
+          onTabChange('data');
+        }}
+      />
     </>
   );
 }
@@ -606,12 +834,14 @@ function DataTab({
   onDeleteRecord,
   onEditRecord,
   setConfirmAction,
+  onAddRecord,
 }: {
   records: DataRecord[];
   dataset: Dataset;
   onDeleteRecord: (id: string) => void;
   onEditRecord: (rec: DataRecord) => void;
   setConfirmAction: (action: ConfirmAction | null) => void;
+  onAddRecord?: () => void;
 }) {
   if (records.length === 0) {
     return (
@@ -619,11 +849,17 @@ function DataTab({
         <EmptyState
           icon={<Database size={36} />}
           title="Belum ada baris data"
-          description="Dataset ini belum memiliki data. Masukkan data statistik melalui formulir atau salin-tempel spreadsheet."
+          description="Dataset ini belum memiliki data. Masukkan data statistik melalui formulir cepat atau salin-tempel spreadsheet."
           actions={
-            <Link href={`/input?dataset=${dataset.id}`}>
-              <Button icon={<Plus size={14} />}>Tambah Data Pertama</Button>
-            </Link>
+            onAddRecord ? (
+              <Button variant="primary" icon={<Plus size={14} />} onClick={onAddRecord}>
+                Tambah Data Pertama
+              </Button>
+            ) : (
+              <Link href={`/input?dataset=${dataset.id}`}>
+                <Button icon={<Plus size={14} />}>Tambah Data Pertama</Button>
+              </Link>
+            )
           }
         />
       </div>
@@ -631,7 +867,24 @@ function DataTab({
   }
 
   return (
-    <div className="data-table-wrapper">
+    <div className="space-y-3">
+      {onAddRecord && (
+        <div className="flex items-center justify-between gap-3 px-1 py-0.5">
+          <span className="text-xs text-slate-500 font-medium">
+            Total <strong>{records.length}</strong> baris data statistik
+          </span>
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<Plus size={13} />}
+            onClick={onAddRecord}
+            className="text-xs font-medium"
+          >
+            Tambah Data
+          </Button>
+        </div>
+      )}
+      <div className="data-table-wrapper">
       <table className="data-table data-table-sticky">
         <thead>
           <tr>
@@ -704,6 +957,7 @@ function DataTab({
           ))}
         </tbody>
       </table>
+    </div>
     </div>
   );
 }

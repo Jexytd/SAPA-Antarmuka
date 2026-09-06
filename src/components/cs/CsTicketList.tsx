@@ -178,7 +178,14 @@ export function CsTicketList({
         </div>
 
         {/* Filter Tabs Scrollable List */}
-        <div className="cs-tabs-list">
+        <div
+          className="cs-tabs-list"
+          onWheel={(e) => {
+            if (e.deltaY !== 0) {
+              e.currentTarget.scrollLeft += e.deltaY;
+            }
+          }}
+        >
           {tabs.map((tab) => {
             const isActive = activeTab === tab.key;
             return (

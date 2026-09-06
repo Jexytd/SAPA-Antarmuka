@@ -7,9 +7,10 @@ import QRCode from 'qrcode';
 import { useAuth } from '@/contexts/AuthContext';
 import AppLayout from '@/components/layout/AppLayout';
 import Header from '@/components/layout/Header';
-import { Button, Modal, Toast } from '@/components/ui';
+import { Button, Modal, Toast, ServerOfflineState } from '@/components/ui';
 import { BackendApi, getEffectiveBackendUrl, BotStatusData } from '@/lib/apiClient';
-import { formatDate } from '@/lib/utils';
+import { getBackendStatus, subscribeBackendStatus, syncWithBackend, BackendConnectionState } from '@/lib/repository';
+import { formatDate, cn } from '@/lib/utils';
 import {
   QrCode,
   Smartphone,
@@ -51,6 +52,9 @@ const QR_EXPIRE_SECONDS = 300; // 5 menit auto-reset QR Code
 export default function WhatsAppHostPage() {
   const { isAuthenticated, isLoading, user } = useAuth();
   const router = useRouter();
+
+  const [backendState, setBackendState] = useState<BackendConnectionState>(() => getBackendStatus());
+  const [isRetrying, setIsRetrying] = useState(false);
 
   // Bot Status State
   const [botStatus, setBotStatus] = useState<BotStatusData>({
@@ -415,7 +419,45 @@ export default function WhatsAppHostPage() {
     return () => clearInterval(timer);
   }, [botStatus.state, healthData?.botState, handleRefreshQR]);
 
+  // Subscribe to backend connection status for offline UI
+  useEffect(() => {
+    const unsub = subscribeBackendStatus((state) => {
+      setBackendState(state);
+    });
+    return unsub;
+  }, []);
+
+  const handleRetry = async () => {
+    setIsRetrying(true);
+    try {
+      await syncWithBackend();
+    } finally {
+      setIsRetrying(false);
+    }
+  };
+
   if (isLoading || !isAuthenticated) return null;
+
+  const isOffline = backendState.hasCheckedInitial && !backendState.isConnected;
+
+  if (isOffline) {
+    return (
+      <AppLayout>
+        <Header
+          title="Host WhatsApp Chatbot"
+          subtitle="Kelola perangkat host penanggung jawab chatbot resmi SAPA BPS Kab. Bangka"
+        />
+        <div className="page-content" style={{ padding: '24px 16px' }}>
+          <ServerOfflineState
+            title="Server Backend Sedang Offline"
+            message="Halaman WhatsApp tidak dapat diakses karena server backend tidak aktif atau offline. QR Code dan fitur pairing membutuhkan koneksi ke server backend yang aktif."
+            onRetry={handleRetry}
+            isRetrying={isRetrying}
+          />
+        </div>
+      </AppLayout>
+    );
+  }
 
   const isConnected = botStatus.state === 'connected' || healthData?.botState === 'connected';
   const effectivePhoneNumber = botStatus.phoneNumber || healthData?.phoneNumber;
@@ -426,114 +468,34 @@ export default function WhatsAppHostPage() {
         title="Host WhatsApp Chatbot"
         subtitle="Kelola perangkat host penanggung jawab chatbot resmi SAPA BPS Kab. Bangka"
         actions={
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div className="flex items-center gap-3">
             {isConnected ? (
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  padding: '6px 14px',
-                  borderRadius: 20,
-                  background: '#ecfdf5',
-                  border: '1px solid #10b981',
-                  color: '#047857',
-                  fontSize: 12.5,
-                  fontWeight: 600,
-                }}
-              >
-                <span
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: '50%',
-                    background: '#10b981',
-                    boxShadow: '0 0 8px #10b981',
-                  }}
-                />
-                ONLINE & TERHUBUNG
-              </div>
+              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-md">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                Terhubung
+              </span>
             ) : (botStatus.isScanning || botStatus.state === 'scanning') ? (
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  padding: '6px 14px',
-                  borderRadius: 20,
-                  background: '#ecfeff',
-                  border: '1px solid #06b6d4',
-                  color: '#0891b2',
-                  fontSize: 12.5,
-                  fontWeight: 600,
-                  boxShadow: '0 0 10px rgba(6, 182, 212, 0.25)',
-                }}
-              >
-                <RefreshCw size={12} className="spin" />
-                SEDANG DI-SCAN OLEH WHATSAPP...
-              </div>
+              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-sky-700 bg-sky-50 border border-sky-200 px-2.5 py-1 rounded-md">
+                <span className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-pulse" />
+                Sedang memproses...
+              </span>
             ) : botStatus.state === 'connecting' ? (
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  padding: '6px 14px',
-                  borderRadius: 20,
-                  background: '#eff6ff',
-                  border: '1px solid #3b82f6',
-                  color: '#1d4ed8',
-                  fontSize: 12.5,
-                  fontWeight: 600,
-                }}
-              >
-                <RefreshCw size={12} className="spin" />
-                MENYAMBUNGKAN KE WHATSAPP...
-              </div>
+              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-md">
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+                Menyambungkan...
+              </span>
             ) : botStatus.state === 'qr_ready' ? (
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  padding: '6px 14px',
-                  borderRadius: 20,
-                  background: '#fffbeb',
-                  border: '1px solid #f59e0b',
-                  color: '#b45309',
-                  fontSize: 12.5,
-                  fontWeight: 600,
-                }}
-              >
-                <span
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: '50%',
-                    background: '#f59e0b',
-                    boxShadow: '0 0 8px #f59e0b',
-                  }}
-                />
-                MENUNGGU SCAN QR ({formatCountdown(countdown)})
-              </div>
+              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-700 bg-slate-50 border border-slate-200 px-2.5 py-1 rounded-md">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                <span>Menunggu scan QR</span>
+                <span className="text-slate-400">•</span>
+                <span className="text-slate-500 font-mono text-[11px]">{formatCountdown(countdown)}</span>
+              </span>
             ) : (
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  padding: '6px 14px',
-                  borderRadius: 20,
-                  background: '#f1f5f9',
-                  border: '1px solid #94a3b8',
-                  color: '#475569',
-                  fontSize: 12.5,
-                  fontWeight: 600,
-                }}
-              >
-                <RefreshCw size={12} className={isRefreshingQR ? 'spin' : ''} />
-                MENYIAPKAN SOCKET...
-              </div>
+              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-600 bg-slate-50 border border-slate-200 px-2.5 py-1 rounded-md">
+                <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                Menyiapkan socket...
+              </span>
             )}
 
             <Button
@@ -547,30 +509,11 @@ export default function WhatsAppHostPage() {
               }
               onClick={() => handleRunDiagnostics(true)}
               title="Periksa koneksi, latency ping, dan diagnosa status lengkap"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 6,
-                fontWeight: 600,
-              }}
+              className="text-xs font-medium text-slate-700 bg-white border border-slate-200 hover:bg-slate-50"
             >
               <span>{isCheckingDiagnostics ? 'Memeriksa...' : 'Cek Status'}</span>
               {lastPing !== null && !isCheckingDiagnostics && (
-                <span
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 3,
-                    padding: '2px 7px',
-                    borderRadius: 12,
-                    fontSize: 11,
-                    fontWeight: 700,
-                    background: lastPing < 60 ? '#ecfdf5' : lastPing < 200 ? '#fef3c7' : '#fee2e2',
-                    color: lastPing < 60 ? '#047857' : lastPing < 200 ? '#b45309' : '#b91c1c',
-                    border: `1px solid ${lastPing < 60 ? '#a7f3d0' : lastPing < 200 ? '#fde68a' : '#fca5a5'}`,
-                  }}
-                >
-                  <Activity size={10} />
+                <span className="text-[11px] font-mono text-slate-400 ml-1">
                   {lastPing}ms
                 </span>
               )}
@@ -579,215 +522,99 @@ export default function WhatsAppHostPage() {
         }
       />
 
-      <div className="page-content" style={{ maxWidth: 1180 }}>
+      <div className="page-content max-w-[1240px] mx-auto px-6 sm:px-8 py-8">
         {/* ============================================================ */}
         {/* KONDISI 1: BOT SUDAH TERHUBUNG (CONNECTED)                   */}
         {/* ============================================================ */}
         {isConnected ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-            {/* Card Hero Connected */}
-            <div
-              style={{
-                background: 'linear-gradient(135deg, #064e3b 0%, #065f46 50%, #047857 100%)',
-                borderRadius: 16,
-                padding: '32px 28px',
-                color: '#ffffff',
-                boxShadow: '0 12px 30px -10px rgba(6, 78, 59, 0.4)',
-                position: 'relative',
-                overflow: 'hidden',
-              }}
-            >
-              <div
-                style={{
-                  position: 'absolute',
-                  top: -20,
-                  right: -20,
-                  width: 200,
-                  height: 200,
-                  background: 'radial-gradient(circle, rgba(52, 211, 153, 0.25) 0%, transparent 70%)',
-                  borderRadius: '50%',
-                  pointerEvents: 'none',
-                }}
-              />
-
-              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 20 }}>
-                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 18 }}>
-                  <div
-                    style={{
-                      width: 58,
-                      height: 58,
-                      borderRadius: 16,
-                      background: 'rgba(255, 255, 255, 0.15)',
-                      backdropFilter: 'blur(8px)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      border: '1px solid rgba(255, 255, 255, 0.25)',
-                      flexShrink: 0,
-                    }}
-                  >
-                    <Smartphone size={30} style={{ color: '#34d399' }} />
+          <div className="space-y-6">
+            {/* Panel Perangkat Terhubung */}
+            <div className="bg-white border border-slate-200 rounded-xl p-6 sm:p-8">
+              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-6 pb-6 border-b border-slate-100">
+                <div className="space-y-2">
+                  <div className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-md">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                    Perangkat Host Aktif
                   </div>
-                  <div>
-                    <div
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 6,
-                        background: 'rgba(16, 185, 129, 0.3)',
-                        border: '1px solid rgba(52, 211, 153, 0.4)',
-                        padding: '3px 10px',
-                        borderRadius: 20,
-                        fontSize: 11.5,
-                        fontWeight: 600,
-                        letterSpacing: 0.5,
-                        marginBottom: 8,
-                      }}
-                    >
-                      <CheckCircle2 size={12} style={{ color: '#34d399' }} />
-                      PERANGKAT HOST AKTIF
-                    </div>
-                    <h2 style={{ fontSize: 24, fontWeight: 700, margin: '0 0 6px 0', letterSpacing: '-0.02em' }}>
-                      {formatPhone(effectivePhoneNumber)}
-                    </h2>
-                    <p style={{ margin: 0, fontSize: 13.5, color: '#a7f3d0', maxWidth: 540, lineHeight: 1.5 }}>
-                      Akun WhatsApp ini bertindak sebagai penanggung jawab resmi layanan chatbot <strong>SAPA BPS Kab. Bangka</strong>. Seluruh pesan masyarakat akan dijawab secara otomatis melalui nomor ini.
-                    </p>
-                  </div>
+                  <h2 className="text-2xl font-semibold text-slate-900 tracking-tight">
+                    {formatPhone(effectivePhoneNumber)}
+                  </h2>
+                  <p className="text-sm text-slate-500 max-w-xl leading-relaxed">
+                    Nomor WhatsApp ini bertindak sebagai penanggung jawab resmi layanan chatbot <strong>SAPA BPS Kab. Bangka</strong>. Seluruh pesan masyarakat akan dijawab secara otomatis melalui nomor ini.
+                  </p>
                 </div>
 
-                {/* Tombol Putuskan Sambungan */}
-                <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                <div>
                   <Button
                     variant="danger"
-                    size="md"
-                    icon={<LogOut size={15} />}
+                    size="sm"
+                    icon={<LogOut size={14} />}
                     onClick={() => setShowLogoutModal(true)}
-                    style={{
-                      boxShadow: '0 4px 14px rgba(220, 38, 38, 0.35)',
-                      fontWeight: 600,
-                    }}
+                    className="text-xs font-medium"
                   >
-                    Logout / Putuskan Sambungan
+                    Putuskan Sambungan
                   </Button>
                 </div>
               </div>
 
-              {/* Status Footer Chips */}
-              <div
-                style={{
-                  marginTop: 24,
-                  paddingTop: 18,
-                  borderTop: '1px solid rgba(255, 255, 255, 0.15)',
-                  display: 'flex',
-                  gap: 20,
-                  flexWrap: 'wrap',
-                  fontSize: 12.5,
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#d1fae5' }}>
-                  <Clock size={14} style={{ color: '#34d399' }} />
-                  <span>Terhubung Sejak: <strong>{botStatus.connectedAt ? formatDate(botStatus.connectedAt) : 'Sesi Aktif'}</strong></span>
+              {/* Status Details */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-6 text-xs text-slate-600">
+                <div className="flex items-center gap-2.5">
+                  <Clock size={15} className="text-slate-400 shrink-0" />
+                  <div>
+                    <span className="text-slate-400 block text-[11px]">Terhubung Sejak</span>
+                    <span className="font-medium text-slate-700">
+                      {botStatus.connectedAt ? formatDate(botStatus.connectedAt) : 'Sesi Aktif'}
+                    </span>
+                  </div>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#d1fae5' }}>
-                  <ShieldCheck size={14} style={{ color: '#34d399' }} />
-                  <span>Enkripsi End-to-End: <strong>Aktif (Signal Protocol)</strong></span>
+
+                <div className="flex items-center gap-2.5">
+                  <ShieldCheck size={15} className="text-slate-400 shrink-0" />
+                  <div>
+                    <span className="text-slate-400 block text-[11px]">Protokol Enkripsi</span>
+                    <span className="font-medium text-slate-700">Signal Protocol (End-to-End)</span>
+                  </div>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#d1fae5' }}>
-                  <Radio size={14} style={{ color: '#34d399' }} />
-                  <span>Model Jawaban: <strong>Dinamis Website & Database BPS</strong></span>
+
+                <div className="flex items-center gap-2.5">
+                  <Radio size={15} className="text-slate-400 shrink-0" />
+                  <div>
+                    <span className="text-slate-400 block text-[11px]">Basis Pengetahuan</span>
+                    <span className="font-medium text-slate-700">Katalog Dataset Resmi BPS</span>
+                  </div>
                 </div>
               </div>
             </div>
 
-            {/* Quick Actions & Live Simulator Banner */}
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
-                gap: 16,
-              }}
-            >
-              <div
-                style={{
-                  background: '#ffffff',
-                  border: '1px solid var(--slate-200)',
-                  borderRadius: 14,
-                  padding: 20,
-                  display: 'flex',
-                  alignItems: 'flex-start',
-                  gap: 14,
-                }}
-              >
-                <div
-                  style={{
-                    width: 42,
-                    height: 42,
-                    borderRadius: 10,
-                    background: '#eff6ff',
-                    color: '#2563eb',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    flexShrink: 0,
-                  }}
-                >
-                  <Sparkles size={20} />
-                </div>
-                <div style={{ flex: 1 }}>
-                  <h4 style={{ margin: '0 0 4px 0', fontSize: 15, fontWeight: 600, color: '#1e293b' }}>
-                    Simulator Chatbot Admin
-                  </h4>
-                  <p style={{ margin: '0 0 12px 0', fontSize: 13, color: '#64748b', lineHeight: 1.4 }}>
-                    Ingin menguji bagaimana bot membalas pertanyaan data tanpa mengirim chat ke nomor WhatsApp asli?
+            {/* Aksi Cepat / Shortcut */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="bg-white border border-slate-200 rounded-xl p-5 flex items-start justify-between gap-4">
+                <div className="space-y-1">
+                  <h3 className="text-sm font-semibold text-slate-900">Simulator Chatbot</h3>
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    Uji coba respons bot terhadap berbagai kata kunci tanpa mengirim pesan WhatsApp sungguhan.
                   </p>
-                  <Link href="/keywords">
-                    <Button variant="secondary" size="sm" icon={<ExternalLink size={13} />}>
-                      Buka Simulator Chatbot
-                    </Button>
-                  </Link>
                 </div>
+                <Link href="/keywords" className="shrink-0 pt-0.5">
+                  <Button variant="secondary" size="sm" icon={<ExternalLink size={13} />}>
+                    Buka
+                  </Button>
+                </Link>
               </div>
 
-              <div
-                style={{
-                  background: '#ffffff',
-                  border: '1px solid var(--slate-200)',
-                  borderRadius: 14,
-                  padding: 20,
-                  display: 'flex',
-                  alignItems: 'flex-start',
-                  gap: 14,
-                }}
-              >
-                <div
-                  style={{
-                    width: 42,
-                    height: 42,
-                    borderRadius: 10,
-                    background: '#f0fdf4',
-                    color: '#16a34a',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    flexShrink: 0,
-                  }}
-                >
-                  <Layers size={20} />
-                </div>
-                <div style={{ flex: 1 }}>
-                  <h4 style={{ margin: '0 0 4px 0', fontSize: 15, fontWeight: 600, color: '#1e293b' }}>
-                    Katalog & Input Data Baru
-                  </h4>
-                  <p style={{ margin: '0 0 12px 0', fontSize: 13, color: '#64748b', lineHeight: 1.4 }}>
-                    Setiap dataset baru yang Anda input dan publikasikan otomatis disajikan oleh bot ke masyarakat.
+              <div className="bg-white border border-slate-200 rounded-xl p-5 flex items-start justify-between gap-4">
+                <div className="space-y-1">
+                  <h3 className="text-sm font-semibold text-slate-900">Input Data Statistik</h3>
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    Perbarui atau tambahkan indikator statistik terbaru agar dapat diakses oleh publik.
                   </p>
-                  <Link href="/input">
-                    <Button variant="secondary" size="sm" icon={<ExternalLink size={13} />}>
-                      Input Data Statistik
-                    </Button>
-                  </Link>
                 </div>
+                <Link href="/input" className="shrink-0 pt-0.5">
+                  <Button variant="secondary" size="sm" icon={<ExternalLink size={13} />}>
+                    Input Data
+                  </Button>
+                </Link>
               </div>
             </div>
           </div>
@@ -795,153 +622,79 @@ export default function WhatsAppHostPage() {
           /* ============================================================ */
           /* KONDISI 2: BOT BELUM TERHUBUNG (LOGIN QR / PAIRING)          */
           /* ============================================================ */
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'minmax(340px, 480px) 1fr',
-              gap: 24,
-              alignItems: 'start',
-            }}
-          >
-            {/* Kolom Kiri: Kartu Login Host */}
-            <div
-              style={{
-                background: '#ffffff',
-                border: '1px solid var(--slate-200)',
-                borderRadius: 16,
-                boxShadow: '0 6px 20px -4px rgba(0, 0, 0, 0.05)',
-                overflow: 'hidden',
-              }}
-            >
-              {/* Tab Selector */}
-              <div
-                style={{
-                  display: 'flex',
-                  borderBottom: '1px solid var(--slate-200)',
-                  background: '#f8fafc',
-                }}
-              >
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-start">
+            {/* Kolom Kiri: Main Connection Area */}
+            <div className="lg:col-span-7 bg-white border border-slate-200 rounded-xl p-6 sm:p-8">
+              {/* Header Connection */}
+              <div className="mb-6">
+                <h2 className="text-lg font-semibold text-slate-900 tracking-tight">
+                  Hubungkan WhatsApp
+                </h2>
+                <p className="text-sm text-slate-500 mt-1">
+                  Buka WhatsApp di smartphone Anda → Perangkat Tertaut → arahkan kamera ke QR Code.
+                </p>
+              </div>
+
+              {/* Tabs Switcher Sederhana & Bersih */}
+              <div className="flex border-b border-slate-200 mb-6">
                 <button
                   type="button"
                   onClick={() => setLoginMethod('qr')}
-                  style={{
-                    flex: 1,
-                    padding: '14px 16px',
-                    border: 'none',
-                    background: loginMethod === 'qr' ? '#ffffff' : 'transparent',
-                    borderBottom: loginMethod === 'qr' ? '2px solid var(--primary-color)' : 'none',
-                    fontWeight: loginMethod === 'qr' ? 600 : 500,
-                    color: loginMethod === 'qr' ? 'var(--primary-color)' : '#64748b',
-                    cursor: 'pointer',
-                    fontSize: 13.5,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 8,
-                    transition: 'all 0.15s ease',
-                  }}
+                  className={cn(
+                    'pb-3 px-1 mr-6 text-sm font-medium transition-colors border-b-2 -mb-px flex items-center gap-2 cursor-pointer',
+                    loginMethod === 'qr'
+                      ? 'border-blue-600 text-blue-600'
+                      : 'border-transparent text-slate-500 hover:text-slate-800'
+                  )}
                 >
-                  <QrCode size={16} />
+                  <QrCode size={15} />
                   Scan QR Code
                 </button>
                 <button
                   type="button"
                   onClick={() => setLoginMethod('pairing')}
-                  style={{
-                    flex: 1,
-                    padding: '14px 16px',
-                    border: 'none',
-                    background: loginMethod === 'pairing' ? '#ffffff' : 'transparent',
-                    borderBottom: loginMethod === 'pairing' ? '2px solid var(--primary-color)' : 'none',
-                    fontWeight: loginMethod === 'pairing' ? 600 : 500,
-                    color: loginMethod === 'pairing' ? 'var(--primary-color)' : '#64748b',
-                    cursor: 'pointer',
-                    fontSize: 13.5,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 8,
-                    transition: 'all 0.15s ease',
-                  }}
+                  className={cn(
+                    'pb-3 px-1 text-sm font-medium transition-colors border-b-2 -mb-px flex items-center gap-2 cursor-pointer',
+                    loginMethod === 'pairing'
+                      ? 'border-blue-600 text-blue-600'
+                      : 'border-transparent text-slate-500 hover:text-slate-800'
+                  )}
                 >
-                  <PhoneCall size={16} />
+                  <PhoneCall size={15} />
                   Nomor HP (Pairing)
                 </button>
               </div>
 
-              {/* Tab Content: Scan QR Code */}
+              {/* Tab 1: QR Code Method */}
               {loginMethod === 'qr' && (
-                <div style={{ padding: 24, textAlign: 'center' }}>
-                  <div style={{ marginBottom: 16 }}>
-                    <h3 style={{ margin: '0 0 6px 0', fontSize: 17, fontWeight: 700, color: '#0f172a' }}>
-                      Scan QR Code dengan WhatsApp
-                    </h3>
-                    <p style={{ margin: 0, fontSize: 13, color: '#64748b', lineHeight: 1.4 }}>
-                      Buka WhatsApp di HP Anda &gt; <strong>Perangkat Tertaut</strong> &gt; arahkan kamera ke kode di bawah:
-                    </p>
-                  </div>
-
-                  {/* ALERT 1: POP-UP GAGAL MENAMBAHKAN PERANGKAT DI WHATSAPP HP */}
+                <div className="flex flex-col items-center text-center">
+                  {/* Inline Error Alert jika ada kendala */}
                   {botStatus.lastError && !isConnected && (
-                    <div
-                      style={{
-                        marginBottom: 18,
-                        padding: '14px 16px',
-                        borderRadius: 12,
-                        background: '#fef2f2',
-                        border: '1px solid #f87171',
-                        color: '#991b1b',
-                        textAlign: 'left',
-                        boxShadow: '0 4px 14px rgba(239, 68, 68, 0.1)',
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-                        <div
-                          style={{
-                            width: 32,
-                            height: 32,
-                            borderRadius: '50%',
-                            background: '#fee2e2',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            flexShrink: 0,
-                            marginTop: 2,
-                          }}
-                        >
-                          <AlertCircle size={18} style={{ color: '#dc2626' }} />
-                        </div>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontSize: 13.5, fontWeight: 700, color: '#b91c1c', marginBottom: 3 }}>
-                            {botStatus.lastError.title || 'Gagal Menautkan Perangkat di WhatsApp'}
-                          </div>
-                          <p style={{ margin: '0 0 6px 0', fontSize: 12.5, color: '#7f1d1d', lineHeight: 1.45 }}>
-                            {botStatus.lastError.message}
+                    <div className="w-full text-left bg-red-50/70 border border-red-200 rounded-lg p-3.5 mb-6">
+                      <div className="flex items-start gap-2.5">
+                        <AlertCircle size={16} className="text-red-600 shrink-0 mt-0.5" />
+                        <div className="space-y-1 text-xs">
+                          <p className="font-semibold text-red-900">
+                            {botStatus.lastError.title || 'QR Code telah kedaluwarsa'}
+                          </p>
+                          <p className="text-red-700 leading-relaxed">
+                            {botStatus.lastError.message || 'QR Code sebelumnya sudah tidak dapat digunakan. Buat QR Code baru untuk melanjutkan.'}
                           </p>
                           {botStatus.lastError.suggestedAction && (
-                            <div
-                              style={{
-                                fontSize: 12,
-                                color: '#991b1b',
-                                background: '#fee2e2',
-                                padding: '6px 10px',
-                                borderRadius: 6,
-                                marginTop: 6,
-                                border: '1px solid #fca5a5',
-                              }}
-                            >
-                              💡 <strong>Saran:</strong> {botStatus.lastError.suggestedAction}
-                            </div>
+                            <p className="text-red-600 text-[11px]">
+                              Saran: {botStatus.lastError.suggestedAction}
+                            </p>
                           )}
-                          <div style={{ marginTop: 10 }}>
+                          <div className="pt-2">
                             <Button
                               variant="danger"
                               size="sm"
                               icon={<RefreshCw size={12} className={isRefreshingQR ? 'spin' : ''} />}
                               onClick={() => handleRefreshQR(true)}
                               disabled={isRefreshingQR}
+                              className="text-xs font-medium"
                             >
-                              {isRefreshingQR ? 'Menyiapkan...' : 'Scan Ulang QR Code Baru'}
+                              {isRefreshingQR ? 'Menyiapkan...' : 'Buat QR Baru'}
                             </Button>
                           </div>
                         </div>
@@ -949,202 +702,87 @@ export default function WhatsAppHostPage() {
                     </div>
                   )}
 
-                  {/* ALERT 2: INDIKATOR BARCODE SEDANG DI-SCAN / DIGUNAKAN WHATSAPP */}
+                  {/* Scanning State Indicator */}
                   {(botStatus.isScanning || botStatus.state === 'scanning') && (
-                    <div
-                      style={{
-                        marginBottom: 16,
-                        padding: '12px 16px',
-                        borderRadius: 12,
-                        background: 'linear-gradient(135deg, #0e7490 0%, #0284c7 100%)',
-                        color: '#ffffff',
-                        textAlign: 'left',
-                        boxShadow: '0 4px 14px rgba(14, 116, 144, 0.25)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 12,
-                      }}
-                    >
-                      <div
-                        style={{
-                          width: 34,
-                          height: 34,
-                          borderRadius: '50%',
-                          background: 'rgba(255, 255, 255, 0.2)',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          flexShrink: 0,
-                        }}
-                      >
-                        <RefreshCw size={16} className="spin" />
-                      </div>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 13.5, fontWeight: 700 }}>
-                          Barcode Sedang Di-scan oleh WhatsApp!
-                        </div>
-                        <div style={{ fontSize: 12, color: '#e0f2fe', marginTop: 2 }}>
-                          {botStatus.scanMessage || 'QR Code terdeteksi sedang digunakan. Memproses otorisasi perangkat di HP Anda...'}
-                        </div>
+                    <div className="w-full text-left bg-sky-50 border border-sky-200 rounded-lg p-3 mb-6 flex items-center gap-3">
+                      <RefreshCw size={15} className="text-sky-600 spin shrink-0" />
+                      <div className="text-xs">
+                        <span className="font-semibold text-sky-900 block">QR Code sedang di-scan oleh WhatsApp</span>
+                        <span className="text-sky-700">
+                          {botStatus.scanMessage || 'Sedang memproses otorisasi perangkat di smartphone Anda...'}
+                        </span>
                       </div>
                     </div>
                   )}
 
-                  {/* QR Code Container */}
-                  <div
-                    style={{
-                      background: '#ffffff',
-                      border: (botStatus.isScanning || botStatus.state === 'scanning')
-                        ? '2px solid #0284c7'
-                        : '2px dashed #cbd5e1',
-                      borderRadius: 16,
-                      padding: 18,
-                      display: 'inline-flex',
-                      flexDirection: 'column',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      minWidth: 280,
-                      minHeight: 280,
-                      boxShadow: (botStatus.isScanning || botStatus.state === 'scanning')
-                        ? '0 0 24px rgba(2, 132, 199, 0.35)'
-                        : '0 4px 14px rgba(0, 0, 0, 0.04)',
-                      margin: '8px 0 16px 0',
-                      position: 'relative',
-                      transition: 'all 0.3s ease',
-                    }}
-                  >
+                  {/* QR Code Container Bersih */}
+                  <div className="bg-white border border-slate-200 rounded-lg p-4 inline-flex flex-col items-center justify-center mb-4">
                     {qrDataUrl ? (
-                      <div style={{ position: 'relative', display: 'inline-block' }}>
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={qrDataUrl}
-                          alt="QR Code WhatsApp Bot"
-                          style={{
-                            width: 250,
-                            height: 250,
-                            borderRadius: 8,
-                            display: 'block',
-                            opacity: (botStatus.isScanning || botStatus.state === 'scanning') ? 0.9 : 1,
-                          }}
-                        />
-
-                        {/* Overlay Badge saat sedang di-scan */}
-                        {(botStatus.isScanning || botStatus.state === 'scanning') && (
-                          <div
-                            style={{
-                              position: 'absolute',
-                              bottom: 10,
-                              left: '50%',
-                              transform: 'translateX(-50%)',
-                              background: 'rgba(15, 23, 42, 0.88)',
-                              backdropFilter: 'blur(4px)',
-                              color: '#38bdf8',
-                              padding: '5px 12px',
-                              borderRadius: 20,
-                              fontSize: 11.5,
-                              fontWeight: 700,
-                              letterSpacing: 0.3,
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: 6,
-                              boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
-                              whiteSpace: 'nowrap',
-                            }}
-                          >
-                            <RefreshCw size={11} className="spin" />
-                            <span>Sedang Memproses Scan HP...</span>
-                          </div>
-                        )}
-                      </div>
+                      <img
+                        src={qrDataUrl}
+                        alt="QR Code WhatsApp Bot"
+                        className="w-[280px] h-[280px] rounded block"
+                      />
                     ) : (
-                      <div style={{ padding: '36px 16px', color: '#64748b' }}>
-                        <RefreshCw size={32} className="spin" style={{ color: 'var(--primary-color)', marginBottom: 12 }} />
-                        <div style={{ fontSize: 13, fontWeight: 500 }}>Menyiapkan QR Code baru...</div>
-                        <div style={{ fontSize: 11.5, color: '#94a3b8', marginTop: 4 }}>Mohon tunggu beberapa detik</div>
+                      <div className="w-[280px] h-[280px] flex flex-col items-center justify-center text-slate-400 gap-3">
+                        <RefreshCw size={28} className="spin text-slate-400" />
+                        <span className="text-xs font-medium text-slate-500">Menyiapkan QR Code...</span>
                       </div>
                     )}
                   </div>
 
-                  {/* Countdown Timer Bar (5 Menit) */}
-                  <div
-                    style={{
-                      background: '#f8fafc',
-                      border: '1px solid var(--slate-200)',
-                      borderRadius: 12,
-                      padding: '10px 14px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: 10,
-                      fontSize: 12.5,
-                      marginBottom: 12,
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#475569' }}>
-                      <Clock size={14} style={{ color: '#2563eb' }} />
-                      <span>Refresh otomatis (masa aktif 5 menit):</span>
-                    </div>
-                    <div
-                      style={{
-                        fontWeight: 700,
-                        color: countdown <= 30 ? '#dc2626' : '#2563eb',
-                        fontFamily: 'monospace',
-                        fontSize: 13.5,
-                      }}
-                    >
+                  {/* Countdown Text */}
+                  <div className="text-xs text-slate-500 mb-4">
+                    QR Code berlaku selama{' '}
+                    <span className="font-mono font-medium text-slate-700">
                       {formatCountdown(countdown)}
-                    </div>
+                    </span>
                   </div>
 
-                  {/* Refresh Button Manual */}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    icon={<RefreshCw size={13} className={isRefreshingQR ? 'spin' : ''} />}
-                    onClick={() => handleRefreshQR(true)}
-                    disabled={isRefreshingQR}
-                    style={{ width: '100%', color: 'var(--slate-600)' }}
-                  >
-                    {isRefreshingQR ? 'Sedang Memperbarui...' : 'Perbarui / Buat QR Baru Sekarang'}
-                  </Button>
+                  {/* Action Button Primer */}
+                  <div>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      icon={<RefreshCw size={13} className={isRefreshingQR ? 'spin' : ''} />}
+                      onClick={() => handleRefreshQR(true)}
+                      disabled={isRefreshingQR}
+                      className="text-xs font-medium text-slate-700 bg-white border border-slate-200 hover:bg-slate-50"
+                    >
+                      {isRefreshingQR ? 'Sedang Memperbarui...' : 'Buat QR Baru'}
+                    </Button>
+                  </div>
                 </div>
               )}
 
-              {/* Tab Content: Nomor HP (Pairing Code) */}
+              {/* Tab 2: Pairing Code Method */}
               {loginMethod === 'pairing' && (
-                <div style={{ padding: 24 }}>
-                  <div style={{ marginBottom: 18 }}>
-                    <h3 style={{ margin: '0 0 6px 0', fontSize: 17, fontWeight: 700, color: '#0f172a' }}>
-                      Tautkan Tanpa Scan Kamera
+                <div className="max-w-md mx-auto py-2">
+                  <div className="mb-5">
+                    <h3 className="text-sm font-semibold text-slate-900">
+                      Tautkan dengan Nomor HP
                     </h3>
-                    <p style={{ margin: 0, fontSize: 13, color: '#64748b', lineHeight: 1.4 }}>
-                      Masukkan nomor WhatsApp yang akan dijadikan bot, lalu masukkan kode 8-digit yang muncul di WhatsApp HP Anda.
+                    <p className="text-xs text-slate-500 mt-1">
+                      Masukkan nomor WhatsApp Anda untuk menerima kode pairing 8-digit.
                     </p>
                   </div>
 
-                  <form onSubmit={handleRequestPairing}>
-                    <div style={{ marginBottom: 16 }}>
-                      <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#334155', marginBottom: 6 }}>
-                        Nomor WhatsApp Host:
+                  <form onSubmit={handleRequestPairing} className="space-y-4">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 mb-1.5" htmlFor="phone-input">
+                        Nomor WhatsApp Host
                       </label>
                       <input
+                        id="phone-input"
                         type="text"
-                        placeholder="Contoh: 081234567890 atau 6281234567890"
+                        placeholder="Contoh: 081234567890"
                         value={phoneInput}
                         onChange={(e) => setPhoneInput(e.target.value)}
-                        style={{
-                          width: '100%',
-                          padding: '10px 14px',
-                          borderRadius: 8,
-                          border: '1px solid var(--slate-300)',
-                          fontSize: 14,
-                          outline: 'none',
-                          boxSizing: 'border-box',
-                        }}
+                        className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                       />
-                      <div style={{ fontSize: 11.5, color: '#94a3b8', marginTop: 4 }}>
+                      <span className="text-[11px] text-slate-400 mt-1 block">
                         Gunakan awalan 08 atau 62 (contoh: 081234567890)
-                      </div>
+                      </span>
                     </div>
 
                     <Button
@@ -1153,41 +791,19 @@ export default function WhatsAppHostPage() {
                       size="md"
                       icon={<KeyRound size={14} />}
                       disabled={isRequestingCode}
-                      style={{ width: '100%' }}
+                      className="w-full text-xs font-medium"
                     >
-                      {isRequestingCode ? 'Meminta Kode ke WhatsApp...' : 'Dapatkan Kode Pairing'}
+                      {isRequestingCode ? 'Meminta Kode...' : 'Dapatkan Kode Pairing'}
                     </Button>
                   </form>
 
-                  {/* Display Kode Pairing Jika Didapatkan */}
+                  {/* Kode Pairing Output */}
                   {pairingCode && (
-                    <div
-                      style={{
-                        marginTop: 20,
-                        padding: 16,
-                        background: '#f0fdf4',
-                        border: '1px solid #86efac',
-                        borderRadius: 12,
-                        textAlign: 'center',
-                      }}
-                    >
-                      <div style={{ fontSize: 12, color: '#166534', fontWeight: 600, marginBottom: 8 }}>
-                        MASUKKAN KODE INI DI WHATSAPP HP ANDA:
-                      </div>
-                      <div
-                        style={{
-                          fontSize: 26,
-                          fontWeight: 800,
-                          letterSpacing: 4,
-                          color: '#15803d',
-                          fontFamily: 'monospace',
-                          background: '#ffffff',
-                          padding: '12px 16px',
-                          borderRadius: 8,
-                          border: '1px solid #bbf7d0',
-                          marginBottom: 12,
-                        }}
-                      >
+                    <div className="mt-6 p-4 bg-slate-50 border border-slate-200 rounded-lg text-center space-y-3">
+                      <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wider block">
+                        Masukkan kode ini di WhatsApp Anda:
+                      </span>
+                      <div className="font-mono text-2xl font-bold text-slate-900 tracking-widest bg-white py-2.5 px-4 rounded border border-slate-200">
                         {pairingCode}
                       </div>
                       <Button
@@ -1195,9 +811,9 @@ export default function WhatsAppHostPage() {
                         size="sm"
                         icon={copiedCode ? <Check size={13} /> : <Copy size={13} />}
                         onClick={handleCopyCode}
-                        style={{ width: '100%' }}
+                        className="w-full text-xs font-medium"
                       >
-                        {copiedCode ? 'Kode Berhasil Disalin!' : 'Salin Kode Pairing'}
+                        {copiedCode ? 'Tersalin ke Clipboard' : 'Salin Kode'}
                       </Button>
                     </div>
                   )}
@@ -1205,139 +821,76 @@ export default function WhatsAppHostPage() {
               )}
             </div>
 
-            {/* Kolom Kanan: Panduan Langkah Demi Langkah & Keamanan */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-              {/* Petunjuk Langkah */}
-              <div
-                style={{
-                  background: '#ffffff',
-                  border: '1px solid var(--slate-200)',
-                  borderRadius: 16,
-                  padding: 24,
-                  boxShadow: '0 4px 14px rgba(0, 0, 0, 0.03)',
-                }}
-              >
-                <h3 style={{ margin: '0 0 16px 0', fontSize: 16, fontWeight: 700, color: '#0f172a', display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Smartphone size={18} style={{ color: '#2563eb' }} />
-                  Panduan Menghubungkan WhatsApp
+            {/* Kolom Kanan: Panduan Langkah & Privasi */}
+            <div className="lg:col-span-5 space-y-8 pt-2">
+              {/* Cara Menghubungkan */}
+              <div>
+                <h3 className="text-sm font-semibold text-slate-900 mb-4">
+                  Cara Menghubungkan
                 </h3>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                  <div style={{ display: 'flex', gap: 12 }}>
-                    <div
-                      style={{
-                        width: 26,
-                        height: 26,
-                        borderRadius: '50%',
-                        background: '#eff6ff',
-                        color: '#2563eb',
-                        fontWeight: 700,
-                        fontSize: 12.5,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        flexShrink: 0,
-                      }}
-                    >
-                      1
-                    </div>
-                    <div style={{ fontSize: 13.5, color: '#334155', lineHeight: 1.4 }}>
-                      Buka aplikasi <strong>WhatsApp</strong> di smartphone Android atau iPhone Anda.
-                    </div>
+                <div className="space-y-4">
+                  <div className="flex items-start gap-3.5">
+                    <span className="w-6 h-6 rounded-full bg-slate-100 text-slate-600 text-xs font-semibold flex items-center justify-center shrink-0 mt-0.5">
+                      01
+                    </span>
+                    <p className="text-sm text-slate-600 leading-normal">
+                      Buka aplikasi <strong>WhatsApp</strong> di smartphone Anda.
+                    </p>
                   </div>
 
-                  <div style={{ display: 'flex', gap: 12 }}>
-                    <div
-                      style={{
-                        width: 26,
-                        height: 26,
-                        borderRadius: '50%',
-                        background: '#eff6ff',
-                        color: '#2563eb',
-                        fontWeight: 700,
-                        fontSize: 12.5,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        flexShrink: 0,
-                      }}
-                    >
-                      2
-                    </div>
-                    <div style={{ fontSize: 13.5, color: '#334155', lineHeight: 1.4 }}>
-                      Ketuk menu <strong>Titik Tiga (⋮)</strong> di kanan atas (Android) atau menu <strong>Pengaturan</strong> (iOS).
-                    </div>
+                  <div className="flex items-start gap-3.5">
+                    <span className="w-6 h-6 rounded-full bg-slate-100 text-slate-600 text-xs font-semibold flex items-center justify-center shrink-0 mt-0.5">
+                      02
+                    </span>
+                    <p className="text-sm text-slate-600 leading-normal">
+                      Buka menu <strong>Perangkat Tertaut</strong>.
+                    </p>
                   </div>
 
-                  <div style={{ display: 'flex', gap: 12 }}>
-                    <div
-                      style={{
-                        width: 26,
-                        height: 26,
-                        borderRadius: '50%',
-                        background: '#eff6ff',
-                        color: '#2563eb',
-                        fontWeight: 700,
-                        fontSize: 12.5,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        flexShrink: 0,
-                      }}
-                    >
-                      3
-                    </div>
-                    <div style={{ fontSize: 13.5, color: '#334155', lineHeight: 1.4 }}>
-                      Pilih <strong>Perangkat Tertaut (Linked Devices)</strong>, lalu ketuk tombol <strong>Tautkan Perangkat</strong>.
-                    </div>
+                  <div className="flex items-start gap-3.5">
+                    <span className="w-6 h-6 rounded-full bg-slate-100 text-slate-600 text-xs font-semibold flex items-center justify-center shrink-0 mt-0.5">
+                      03
+                    </span>
+                    <p className="text-sm text-slate-600 leading-normal">
+                      Pilih <strong>Tautkan Perangkat</strong>.
+                    </p>
                   </div>
 
-                  <div style={{ display: 'flex', gap: 12 }}>
-                    <div
-                      style={{
-                        width: 26,
-                        height: 26,
-                        borderRadius: '50%',
-                        background: '#eff6ff',
-                        color: '#2563eb',
-                        fontWeight: 700,
-                        fontSize: 12.5,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        flexShrink: 0,
-                      }}
-                    >
-                      4
-                    </div>
-                    <div style={{ fontSize: 13.5, color: '#334155', lineHeight: 1.4 }}>
-                      Arahkan kamera ke <strong>QR Code</strong> di layar ini. Dalam hitungan detik, bot akan langsung aktif dan terhubung!
-                    </div>
+                  <div className="flex items-start gap-3.5">
+                    <span className="w-6 h-6 rounded-full bg-slate-100 text-slate-600 text-xs font-semibold flex items-center justify-center shrink-0 mt-0.5">
+                      04
+                    </span>
+                    <p className="text-sm text-slate-600 leading-normal">
+                      Scan <strong>QR Code</strong> yang ditampilkan pada halaman ini.
+                    </p>
                   </div>
                 </div>
               </div>
 
-              {/* Jaminan Privasi & Keamanan */}
-              <div
-                style={{
-                  background: '#f8fafc',
-                  border: '1px solid var(--slate-200)',
-                  borderRadius: 14,
-                  padding: 20,
-                  fontSize: 13,
-                  color: '#475569',
-                  lineHeight: 1.5,
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, color: '#1e293b', marginBottom: 8 }}>
-                  <ShieldCheck size={16} style={{ color: '#10b981' }} />
-                  Privasi & Keamanan Perangkat Host
+              {/* Garis pemisah halus */}
+              <div className="border-t border-slate-200" />
+
+              {/* Privasi & Keamanan */}
+              <div>
+                <div className="flex items-center gap-2 mb-3">
+                  <ShieldCheck size={16} className="text-slate-600" />
+                  <h3 className="text-sm font-semibold text-slate-900">
+                    Privasi & Keamanan
+                  </h3>
                 </div>
-                <ul style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <li>Bot <strong>hanya membalas chat pribadi</strong> seputar pertanyaan data statistik resmi BPS.</li>
-                  <li>Bot <strong>tidak pernah membaca atau membalas grup</strong> tempat nomor Anda berada.</li>
-                  <li>Jika Anda ingin mengganti nomor host, cukup klik <strong>Logout</strong> dan scan dengan nomor baru.</li>
-                </ul>
+
+                <div className="space-y-2.5 text-xs text-slate-500 leading-relaxed">
+                  <p>
+                    Bot hanya membalas chat pribadi seputar pertanyaan data statistik resmi BPS.
+                  </p>
+                  <p>
+                    Bot tidak membaca atau membalas grup tempat nomor Anda berada.
+                  </p>
+                  <p>
+                    Jika ingin mengganti nomor host, logout terlebih dahulu lalu lakukan pairing dengan nomor baru.
+                  </p>
+                </div>
               </div>
             </div>
           </div>

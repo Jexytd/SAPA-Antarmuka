@@ -5,8 +5,15 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import AppLayout from '@/components/layout/AppLayout';
 import Header from '@/components/layout/Header';
-import { EmptyState, SearchInput, Select } from '@/components/ui';
-import { AuditRepo, subscribe } from '@/lib/repository';
+import { EmptyState, SearchInput, Select, ServerOfflineState } from '@/components/ui';
+import {
+  AuditRepo,
+  subscribe,
+  getBackendStatus,
+  subscribeBackendStatus,
+  syncWithBackend,
+  BackendConnectionState,
+} from '@/lib/repository';
 import { AuditLog, AuditAction } from '@/lib/types';
 import { formatDate } from '@/lib/utils';
 import { History } from 'lucide-react';
@@ -34,7 +41,13 @@ const FILTER_ACTION_OPTIONS = [
 export default function HistoryPage() {
   const { isAuthenticated, isLoading } = useAuth();
   const router = useRouter();
+
+  const [backendState, setBackendState] = useState<BackendConnectionState>(() => getBackendStatus());
+  const [isRetrying, setIsRetrying] = useState(false);
+
   const [logs, setLogs] = useState<AuditLog[]>(() => {
+    const status = getBackendStatus();
+    if (status.hasCheckedInitial && !status.isConnected) return [];
     try {
       return AuditRepo.getAll();
     } catch {
@@ -46,6 +59,12 @@ export default function HistoryPage() {
   const [filterAction, setFilterAction] = useState('');
 
   const loadData = useCallback(() => {
+    const currentStatus = getBackendStatus();
+    if (currentStatus.hasCheckedInitial && !currentStatus.isConnected) {
+      setLogs([]);
+      setLoading(false);
+      return;
+    }
     setLogs(AuditRepo.getAll());
     setLoading(false);
   }, []);
@@ -57,9 +76,62 @@ export default function HistoryPage() {
       router.push('/login');
       return;
     }
-    const unsub = subscribe(loadData);
-    return unsub;
+
+    const unsubRepo = subscribe(loadData);
+    const unsubStatus = subscribeBackendStatus((state) => {
+      setBackendState(state);
+      if (state.isConnected) {
+        setLogs(AuditRepo.getAll());
+      } else if (state.hasCheckedInitial) {
+        setLogs([]);
+      }
+    });
+
+    if (!getBackendStatus().hasCheckedInitial) {
+      syncWithBackend().finally(() => {
+        loadData();
+      });
+    } else {
+      loadData();
+    }
+
+    return () => {
+      unsubRepo();
+      unsubStatus();
+    };
   }, [isAuthenticated, isLoading, router, loadData]);
+
+  const handleRetry = async () => {
+    setIsRetrying(true);
+    try {
+      await syncWithBackend();
+    } finally {
+      setIsRetrying(false);
+    }
+  };
+
+  const isOffline = backendState.hasCheckedInitial && !backendState.isConnected;
+
+  if (isLoading || !isAuthenticated) return null;
+
+  if (isOffline) {
+    return (
+      <AppLayout>
+        <Header
+          title="Riwayat Audit Perubahan"
+          subtitle="Log jejak aktivitas dan modifikasi data statistik"
+        />
+        <div className="page-content" style={{ maxWidth: 1080, padding: '24px 16px' }}>
+          <ServerOfflineState
+            title="Server Backend Sedang Offline"
+            message="Data riwayat audit tidak dapat ditampilkan karena server backend tidak aktif atau offline, dan database saat ini masih menggunakan penyimpanan lokal."
+            onRetry={handleRetry}
+            isRetrying={isRetrying}
+          />
+        </div>
+      </AppLayout>
+    );
+  }
 
   const filtered = logs.filter((log) => {
     if (search) {
@@ -73,8 +145,6 @@ export default function HistoryPage() {
     if (filterAction && log.action !== filterAction) return false;
     return true;
   });
-
-  if (isLoading || !isAuthenticated) return null;
 
   return (
     <AppLayout>

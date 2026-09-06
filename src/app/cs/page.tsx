@@ -8,7 +8,13 @@ import React, { useState, useEffect, useCallback } from 'react';
 import AppLayout from '@/components/layout/AppLayout';
 import Header from '@/components/layout/Header';
 import { useAuth } from '@/contexts/AuthContext';
-import { Toast } from '@/components/ui';
+import { Toast, ServerOfflineState } from '@/components/ui';
+import {
+  subscribeBackendStatus,
+  getBackendStatus,
+  syncWithBackend,
+  BackendConnectionState,
+} from '@/lib/repository';
 import {
   Ticket,
   TicketMessage,
@@ -39,6 +45,9 @@ export default function CustomerServiceInboxPage() {
   const { user } = useAuth();
   const currentAdminId = user?.id || 'admin-1';
   const currentAdminName = user?.name || 'Petugas CS (BPS Bangka)';
+
+  const [backendState, setBackendState] = useState<BackendConnectionState>(() => getBackendStatus());
+  const [isRetrying, setIsRetrying] = useState(false);
 
   // Core State
   const [tickets, setTickets] = useState<Ticket[]>([]);
@@ -82,6 +91,11 @@ export default function CustomerServiceInboxPage() {
   // Fetch Tickets List
   // ------------------------------------------------------------
   const fetchTickets = useCallback(async () => {
+    if (!getBackendStatus().isConnected) {
+      setTickets([]);
+      setIsLoadingTickets(false);
+      return;
+    }
     try {
       const res = await ticketApi.getTickets({
         status: activeTab,
@@ -97,14 +111,29 @@ export default function CustomerServiceInboxPage() {
   }, [activeTab, currentAdminId, searchQuery]);
 
   useEffect(() => {
-    fetchTickets();
-  }, [fetchTickets]);
+    const unsub = subscribeBackendStatus((state) => {
+      setBackendState(state);
+      if (state.isConnected) {
+        fetchTickets();
+        ticketApi.getAdmins().then(setAdmins).catch(() => {});
+        ticketApi.getSettings().then(setSettings).catch(() => {});
+      } else if (state.hasCheckedInitial) {
+        setTickets([]);
+        setSelectedTicketDetail(null);
+        setIsLoadingTickets(false);
+      }
+    });
 
-  // Initial load admins & settings
-  useEffect(() => {
-    ticketApi.getAdmins().then(setAdmins).catch(() => {});
-    ticketApi.getSettings().then(setSettings).catch(() => {});
-  }, []);
+    if (!getBackendStatus().hasCheckedInitial) {
+      syncWithBackend().finally(() => {
+        fetchTickets();
+      });
+    } else if (getBackendStatus().isConnected) {
+      fetchTickets();
+    }
+
+    return unsub;
+  }, [fetchTickets]);
 
   // ------------------------------------------------------------
   // Load Active Ticket Detail
@@ -424,6 +453,47 @@ export default function CustomerServiceInboxPage() {
   };
 
   const activeTicket = selectedTicketDetail?.ticket || tickets.find((t) => t.id === selectedTicketId) || null;
+  const isOffline = backendState.hasCheckedInitial && !backendState.isConnected;
+
+  if (isOffline) {
+    return (
+      <AppLayout>
+        <Header
+          title="CS Inbox & Ticketing"
+          subtitle="Pelayanan Statistik Terpadu (PST) BPS Kabupaten Bangka — Respon WhatsApp Realtime"
+        />
+        <div className="page-content" style={{ padding: '24px 16px' }}>
+          <ServerOfflineState
+            title="Layanan CS Sedang Offline"
+            message="Fitur Customer Service dan Inbox Tiket tidak dapat ditampilkan karena server backend tidak aktif atau offline, dan database saat ini masih menggunakan penyimpanan lokal."
+            hint="Silakan aktifkan server backend WhatsApp agar tiket chat dan pesan masuk dapat disinkronkan dan direspon secara realtime."
+            isRetrying={isRetrying}
+            onRetry={async () => {
+              setIsRetrying(true);
+              try {
+                const live = await syncWithBackend();
+                if (live) {
+                  await fetchTickets();
+                  setToast({ msg: 'Server backend CS berhasil terhubung!', type: 'success' });
+                } else {
+                  setToast({ msg: 'Server backend CS masih offline.', type: 'error' });
+                }
+              } finally {
+                setIsRetrying(false);
+              }
+            }}
+          />
+        </div>
+        {toast && (
+          <Toast
+            message={toast.msg}
+            type={toast.type}
+            onClose={() => setToast(null)}
+          />
+        )}
+      </AppLayout>
+    );
+  }
 
   return (
     <AppLayout>

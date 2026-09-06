@@ -14,8 +14,18 @@ import {
   Modal,
   InputField,
   SearchInput,
+  ServerOfflineState,
 } from '@/components/ui';
-import { DatasetRepo, RecordRepo, CategoryRepo, subscribe } from '@/lib/repository';
+import {
+  DatasetRepo,
+  RecordRepo,
+  CategoryRepo,
+  subscribe,
+  subscribeBackendStatus,
+  getBackendStatus,
+  syncWithBackend,
+  BackendConnectionState,
+} from '@/lib/repository';
 import { Dataset, DataStatus, PeriodType, ColumnMapping } from '@/lib/types';
 import {
   autoMapColumn,
@@ -70,7 +80,18 @@ function ImportPageInner() {
   const searchParams = useSearchParams();
   const paramDatasetId = searchParams.get('dataset');
 
-  const [datasets, setDatasets] = useState<Dataset[]>([]);
+  const [backendState, setBackendState] = useState<BackendConnectionState>(() => getBackendStatus());
+  const [isRetrying, setIsRetrying] = useState(false);
+  const [datasets, setDatasets] = useState<Dataset[]>(() => {
+    if (getBackendStatus().isConnected) {
+      try {
+        return DatasetRepo.getAll().filter((d) => d.status !== DataStatus.ARCHIVED);
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  });
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>(paramDatasetId || '');
   const [step, setStep] = useState<ImportStep>('upload');
   
@@ -137,14 +158,34 @@ function ImportPageInner() {
       return;
     }
 
-    function loadData() {
-      const active = DatasetRepo.getAll().filter((d) => d.status !== DataStatus.ARCHIVED);
-      setDatasets(active);
+    const unsubBackend = subscribeBackendStatus((state) => {
+      setBackendState(state);
+      if (state.isConnected) {
+        const active = DatasetRepo.getAll().filter((d) => d.status !== DataStatus.ARCHIVED);
+        setDatasets(active);
+      } else if (state.hasCheckedInitial) {
+        setDatasets([]);
+      }
+    });
+
+    if (!getBackendStatus().hasCheckedInitial) {
+      syncWithBackend().finally(() => {});
     }
 
-    loadData();
-    const unsub = subscribe(loadData);
-    return unsub;
+    function loadData() {
+      if (getBackendStatus().isConnected) {
+        const active = DatasetRepo.getAll().filter((d) => d.status !== DataStatus.ARCHIVED);
+        setDatasets(active);
+      } else {
+        setDatasets([]);
+      }
+    }
+
+    const unsubRepo = subscribe(loadData);
+    return () => {
+      unsubBackend();
+      unsubRepo();
+    };
   }, [isAuthenticated, isLoading, router]);
 
   useEffect(() => {
@@ -489,6 +530,52 @@ function ImportPageInner() {
   };
 
   if (isLoading || !isAuthenticated) return null;
+
+  const isOffline = backendState.hasCheckedInitial && !backendState.isConnected;
+
+  if (isOffline) {
+    return (
+      <AppLayout>
+        <Header
+          title="Import Data Excel / CSV"
+          subtitle="Panduan 4 langkah memasukkan data statistik massal dari file spreadsheet"
+          backHref="/datasets"
+        />
+        <div className="page-content" style={{ padding: '24px 16px' }}>
+          <ServerOfflineState
+            title="Server Backend Sedang Offline"
+            message="Fitur Import Data tidak dapat digunakan karena server backend tidak aktif atau offline, dan database saat ini masih menggunakan penyimpanan lokal."
+            hint="Silakan pastikan layanan server backend telah diaktifkan agar data berkas Excel/CSV dapat disinkronkan dan diimpor ke sistem secara resmi."
+            isRetrying={isRetrying}
+            onRetry={async () => {
+              setIsRetrying(true);
+              try {
+                const live = await syncWithBackend();
+                if (live) {
+                  const active = DatasetRepo.getAll().filter((d) => d.status !== DataStatus.ARCHIVED);
+                  setDatasets(active);
+                  setToast({ msg: 'Server backend berhasil terhubung!', type: 'success' });
+                } else {
+                  setToast({ msg: 'Server backend masih offline.', type: 'error' });
+                }
+              } finally {
+                setIsRetrying(false);
+              }
+            }}
+            backHref="/datasets"
+            backLabel="Kembali ke Katalog"
+          />
+        </div>
+        {toast && (
+          <Toast
+            message={toast.msg}
+            type={toast.type}
+            onClose={() => setToast(null)}
+          />
+        )}
+      </AppLayout>
+    );
+  }
 
   return (
     <AppLayout>

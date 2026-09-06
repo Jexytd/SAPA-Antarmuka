@@ -6,15 +6,28 @@ import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import AppLayout from '@/components/layout/AppLayout';
 import Header from '@/components/layout/Header';
-import { SearchInput, StatusBadge, EmptyState, Button } from '@/components/ui';
-import { DatasetRepo, subscribe } from '@/lib/repository';
+import { SearchInput, StatusBadge, EmptyState, Button, ServerOfflineState } from '@/components/ui';
+import {
+  DatasetRepo,
+  subscribe,
+  getBackendStatus,
+  subscribeBackendStatus,
+  syncWithBackend,
+  BackendConnectionState,
+} from '@/lib/repository';
 import { Dataset } from '@/lib/types';
 import { ArrowRight, BookOpen, Layers, Building2 } from 'lucide-react';
 
 export default function MetadataPage() {
   const { isAuthenticated, isLoading } = useAuth();
   const router = useRouter();
+
+  const [backendState, setBackendState] = useState<BackendConnectionState>(() => getBackendStatus());
+  const [isRetrying, setIsRetrying] = useState(false);
+
   const [datasets, setDatasets] = useState<Dataset[]>(() => {
+    const status = getBackendStatus();
+    if (status.hasCheckedInitial && !status.isConnected) return [];
     try {
       return DatasetRepo.getAll();
     } catch {
@@ -25,6 +38,12 @@ export default function MetadataPage() {
   const [loading, setLoading] = useState(false);
 
   const loadData = useCallback(() => {
+    const currentStatus = getBackendStatus();
+    if (currentStatus.hasCheckedInitial && !currentStatus.isConnected) {
+      setDatasets([]);
+      setLoading(false);
+      return;
+    }
     setDatasets(DatasetRepo.getAll());
     setLoading(false);
   }, []);
@@ -36,9 +55,62 @@ export default function MetadataPage() {
       router.push('/login');
       return;
     }
-    const unsub = subscribe(loadData);
-    return unsub;
+
+    const unsubRepo = subscribe(loadData);
+    const unsubStatus = subscribeBackendStatus((state) => {
+      setBackendState(state);
+      if (state.isConnected) {
+        setDatasets(DatasetRepo.getAll());
+      } else if (state.hasCheckedInitial) {
+        setDatasets([]);
+      }
+    });
+
+    if (!getBackendStatus().hasCheckedInitial) {
+      syncWithBackend().finally(() => {
+        loadData();
+      });
+    } else {
+      loadData();
+    }
+
+    return () => {
+      unsubRepo();
+      unsubStatus();
+    };
   }, [isAuthenticated, isLoading, router, loadData]);
+
+  const handleRetry = async () => {
+    setIsRetrying(true);
+    try {
+      await syncWithBackend();
+    } finally {
+      setIsRetrying(false);
+    }
+  };
+
+  const isOffline = backendState.hasCheckedInitial && !backendState.isConnected;
+
+  if (isLoading || !isAuthenticated) return null;
+
+  if (isOffline) {
+    return (
+      <AppLayout>
+        <Header
+          title="Kamus Metadata Indikator"
+          subtitle="Definisi operasional, metodologi, dan standar data makro BPS"
+        />
+        <div className="page-content" style={{ maxWidth: 1180, padding: '24px 16px' }}>
+          <ServerOfflineState
+            title="Server Backend Sedang Offline"
+            message="Data kamus metadata tidak dapat ditampilkan karena server backend tidak aktif atau offline, dan database saat ini masih menggunakan penyimpanan lokal."
+            onRetry={handleRetry}
+            isRetrying={isRetrying}
+          />
+        </div>
+      </AppLayout>
+    );
+  }
 
   const filtered = datasets.filter((d) => {
     if (search) {
@@ -52,8 +124,6 @@ export default function MetadataPage() {
     }
     return true;
   });
-
-  if (isLoading || !isAuthenticated) return null;
 
   return (
     <AppLayout>

@@ -1,10 +1,10 @@
 'use client';
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
-  LayoutDashboard,
+  LayoutGrid,
   Database,
   PenLine,
   Upload,
@@ -13,23 +13,34 @@ import {
   History,
   FileText,
   Users,
-  ChevronLeft,
-  Menu,
-  X,
-  Sparkles,
-  QrCode,
+  ChevronRight,
   Headphones,
+  QrCode,
+  PanelLeftClose,
+  PanelLeft,
+  X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { ROLE_LABELS } from '@/lib/types';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 
-interface NavItem {
+interface SubNavItem {
   label: string;
   href: string;
-  icon: React.ReactNode;
-  group?: string;
   badge?: number | string;
+}
+
+interface NavGroupItem {
+  id: string;
+  label: string;
+  icon: React.ReactNode;
+  href?: string;
+  items?: SubNavItem[];
 }
 
 interface SidebarProps {
@@ -48,100 +59,281 @@ export default function Sidebar({
   const pathname = usePathname();
   const { user } = useAuth();
 
-  const navItems: NavItem[] = [
-    { label: 'Dashboard', href: '/', icon: <LayoutDashboard size={18} /> },
-    { label: 'Katalog Dataset', href: '/datasets', icon: <Database size={18} />, group: 'DATA STATISTIK' },
-    { label: 'Input Data', href: '/input', icon: <PenLine size={18} />, group: 'DATA STATISTIK' },
-    { label: 'Import Excel / CSV', href: '/import', icon: <Upload size={18} />, group: 'DATA STATISTIK' },
-    { label: 'CS Inbox & Tiket', href: '/cs', icon: <Headphones size={18} />, group: 'CHATBOT & LAYANAN' },
-    { label: 'Template Chatbot', href: '/keywords', icon: <MessageSquare size={18} />, group: 'CHATBOT & LAYANAN' },
-    { label: 'Koneksi Host WA', href: '/whatsapp', icon: <QrCode size={18} />, group: 'CHATBOT & LAYANAN' },
-    { label: 'Verifikasi Data', href: '/issues', icon: <ShieldCheck size={18} />, group: 'KUALITAS & VALIDASI' },
-    { label: 'Riwayat Audit', href: '/history', icon: <History size={18} />, group: 'SISTEM & RIWAYAT' },
-    { label: 'Kamus Metadata', href: '/metadata', icon: <FileText size={18} />, group: 'SISTEM & RIWAYAT' },
-    { label: 'Manajemen Pengguna', href: '/users', icon: <Users size={18} />, group: 'SISTEM & RIWAYAT' },
+  // Struktur navigasi bertingkat (Accordion groups ala RudderStack)
+  const navGroups: NavGroupItem[] = [
+    {
+      id: 'dashboard',
+      label: 'Dashboard',
+      href: '/',
+      icon: <LayoutGrid size={18} />,
+    },
+    {
+      id: 'data',
+      label: 'Data Statistik',
+      icon: <Database size={18} />,
+      items: [
+        { label: 'Katalog Dataset', href: '/datasets' },
+        { label: 'Input Data Manual', href: '/input' },
+        { label: 'Import Excel / CSV', href: '/import' },
+      ],
+    },
+    {
+      id: 'chatbot',
+      label: 'Chatbot & CS',
+      icon: <Headphones size={18} />,
+      items: [
+        { label: 'CS Inbox & Tiket', href: '/cs' },
+        { label: 'Template Chatbot', href: '/keywords' },
+        { label: 'Koneksi Host WA', href: '/whatsapp' },
+      ],
+    },
+    {
+      id: 'validation',
+      label: 'Validasi & Mutu',
+      icon: <ShieldCheck size={18} />,
+      items: [
+        { label: 'Verifikasi Data', href: '/issues' },
+        { label: 'Riwayat Audit', href: '/history' },
+      ],
+    },
+    {
+      id: 'settings',
+      label: 'Pengaturan',
+      icon: <FileText size={18} />,
+      items: [
+        { label: 'Kamus Metadata', href: '/metadata' },
+        { label: 'Manajemen Pengguna', href: '/users' },
+      ],
+    },
   ];
+
+  // State untuk accordion grup yang terbuka
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({
+    data: true,
+    chatbot: false,
+    validation: false,
+    settings: false,
+  });
 
   const isActive = (href: string) => {
     if (href === '/') return pathname === '/';
     return pathname.startsWith(href);
   };
 
-  let currentGroup: string | undefined = undefined;
+  const isGroupActive = (group: NavGroupItem) => {
+    if (group.href) return isActive(group.href);
+    return group.items?.some((item) => isActive(item.href)) ?? false;
+  };
+
+  // Otomatis buka grup jika sub-itemnya sedang aktif
+  useEffect(() => {
+    navGroups.forEach((group) => {
+      if (group.items?.some((item) => isActive(item.href))) {
+        setOpenGroups((prev) => ({ ...prev, [group.id]: true }));
+      }
+    });
+  }, [pathname]);
+
+  const toggleGroup = (groupId: string) => {
+    if (collapsed) {
+      onToggle(); // Perluas sidebar jika sedang collapsed saat mengklik grup
+    }
+    setOpenGroups((prev) => ({ ...prev, [groupId]: !prev[groupId] }));
+  };
 
   const renderContent = () => (
     <>
-      {/* Brand Header */}
-      <div className="sidebar-brand">
-        <div className="sidebar-brand-icon">
-          <div
-            style={{
-              width: 34,
-              height: 34,
-              borderRadius: 10,
-              background: 'linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: '#ffffff',
-              boxShadow: '0 4px 10px rgba(37, 99, 235, 0.3)',
-            }}
-          >
-            <Sparkles size={18} />
-          </div>
-        </div>
-        {!collapsed && (
-          <div className="sidebar-brand-text">
-            <div className="sidebar-brand-name">
-              SAPA BPS
-              <span className="sidebar-brand-badge">1901 IN</span>
+      {/* 1. Header Bar: Brand Logo + Collapse Toggle Button */}
+      <div className={cn('sidebar-brand', collapsed && 'sidebar-brand-collapsed')}>
+        {collapsed ? (
+          <div className="flex flex-col items-center gap-2.5 w-full py-1">
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0">
+              <img src="/BPS.svg" alt="Logo" width={28} height={28} />
             </div>
-            <span className="sidebar-brand-sub">BPS Kabupaten Bangka</span>
+            <button
+              className="sidebar-toggle-btn"
+              onClick={onToggle}
+              type="button"
+              title="Perluas sidebar"
+            >
+              <PanelLeft size={16} />
+            </button>
           </div>
+        ) : (
+          <>
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0">
+                <img src="/BPS.svg" alt="Logo" width={30} height={30} />
+              </div>
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span className="font-bold text-[15px] text-slate-900 tracking-tight">
+                  SAPA BPS
+                </span>
+              </div>
+            </div>
+
+            {/* Tombol Collapse di pojok kanan atas */}
+            <button
+              className="sidebar-toggle-btn"
+              onClick={onToggle}
+              type="button"
+              title="Ciutkan sidebar"
+            >
+              <PanelLeftClose size={15} />
+            </button>
+          </>
         )}
       </div>
 
-      {/* Nav List */}
+      {/* 3. Nested Navigation List (Collapsible Accordion) */}
       <nav className="sidebar-nav">
-        {navItems.map((item) => {
-          const showGroup = item.group && item.group !== currentGroup;
-          if (item.group) currentGroup = item.group;
+        {navGroups.map((group) => {
+          const groupActive = isGroupActive(group);
+          const isOpen = !!openGroups[group.id];
 
-          return (
-            <React.Fragment key={item.href}>
-              {showGroup && !collapsed && (
-                <div className="sidebar-group-label">{item.group}</div>
-              )}
-              {showGroup && collapsed && (
-                <div className="sidebar-divider" />
-              )}
+          // Mode 1: Item Tunggal tanpa Sub-menu (contoh: Dashboard)
+          if (group.href) {
+            if (collapsed) {
+              return (
+                <Tooltip key={group.id} delayDuration={0}>
+                  <TooltipTrigger asChild>
+                    <Link
+                      href={group.href}
+                      className={cn(
+                        'sidebar-collapsed-btn',
+                        isActive(group.href) && 'sidebar-collapsed-btn-active'
+                      )}
+                      onClick={onMobileClose}
+                    >
+                      {group.icon}
+                    </Link>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">
+                    <span>{group.label}</span>
+                  </TooltipContent>
+                </Tooltip>
+              );
+            }
+
+            return (
               <Link
-                href={item.href}
+                key={group.id}
+                href={group.href}
                 className={cn(
                   'sidebar-link',
-                  isActive(item.href) && 'sidebar-link-active'
+                  isActive(group.href) && 'sidebar-link-active'
                 )}
-                title={collapsed ? item.label : undefined}
                 onClick={onMobileClose}
               >
-                <span className="sidebar-link-icon">{item.icon}</span>
-                {!collapsed && (
-                  <>
-                    <span className="sidebar-link-label">{item.label}</span>
-                    {item.badge !== undefined && (
-                      <span className="sidebar-link-badge">{item.badge}</span>
-                    )}
-                  </>
-                )}
+                <span className="sidebar-link-icon">{group.icon}</span>
+                <span className="sidebar-link-label">{group.label}</span>
               </Link>
-            </React.Fragment>
+            );
+          }
+
+          // Mode 2: Collapsed State untuk Group Items
+          if (collapsed) {
+            return (
+              <Tooltip key={group.id} delayDuration={0}>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    className={cn(
+                      'sidebar-collapsed-btn',
+                      groupActive && 'sidebar-collapsed-btn-active'
+                    )}
+                    onClick={() => toggleGroup(group.id)}
+                  >
+                    {group.icon}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="right" className="flex flex-col gap-1.5 p-2.5">
+                  <div className="font-semibold text-xs text-white border-b border-slate-700 pb-1">
+                    {group.label}
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    {group.items?.map((sub) => (
+                      <Link
+                        key={sub.href}
+                        href={sub.href}
+                        onClick={onMobileClose}
+                        className={cn(
+                          'text-[11.5px] py-0.5 px-1.5 rounded transition-colors text-slate-300 hover:text-white hover:bg-slate-800',
+                          isActive(sub.href) && 'text-blue-400 font-semibold'
+                        )}
+                      >
+                        {sub.label}
+                      </Link>
+                    ))}
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+            );
+          }
+
+          // Mode 3: Expanded Accordion Group
+          return (
+            <div key={group.id} className="sidebar-accordion-group">
+              <button
+                type="button"
+                className={cn(
+                  'sidebar-accordion-header',
+                  groupActive && 'sidebar-accordion-header-active'
+                )}
+                onClick={() => toggleGroup(group.id)}
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <span
+                    className={cn(
+                      'sidebar-link-icon',
+                      groupActive && 'text-blue-600'
+                    )}
+                  >
+                    {group.icon}
+                  </span>
+                  <span className="sidebar-accordion-label">{group.label}</span>
+                </div>
+                <ChevronRight
+                  size={14}
+                  className={cn(
+                    'text-slate-400 shrink-0 transition-transform duration-200',
+                    isOpen && 'rotate-90 text-slate-600'
+                  )}
+                />
+              </button>
+
+              {/* Sub-item Links (Indentasi & Active Pill ala RudderStack) */}
+              {isOpen && group.items && (
+                <div className="sidebar-sub-container">
+                  {group.items.map((sub) => {
+                    const active = isActive(sub.href);
+                    return (
+                      <Link
+                        key={sub.href}
+                        href={sub.href}
+                        className={cn(
+                          'sidebar-sub-item',
+                          active && 'sidebar-sub-item-active'
+                        )}
+                        onClick={onMobileClose}
+                      >
+                        <span className="truncate">{sub.label}</span>
+                        {sub.badge !== undefined && (
+                          <span className="sidebar-link-badge">{sub.badge}</span>
+                        )}
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           );
         })}
       </nav>
 
-      {/* Footer Profile & Collapse */}
+      {/* 4. Footer: User Profile Card (Simpel, Bersih, Sesuai Arahan) */}
       <div className="sidebar-footer">
-        {!collapsed && user && (
+        {!collapsed && user ? (
           <div className="sidebar-user-card">
             <div className="sidebar-user-avatar">
               {user.name.charAt(0)}
@@ -151,21 +343,19 @@ export default function Sidebar({
               <span className="sidebar-user-role">{ROLE_LABELS[user.role]}</span>
             </div>
           </div>
-        )}
-        <button
-          className="sidebar-collapse-btn"
-          onClick={onToggle}
-          type="button"
-          title={collapsed ? 'Perluas sidebar' : 'Perkecil sidebar'}
-        >
-          <ChevronLeft
-            size={16}
-            className={cn(
-              'transition-transform duration-200',
-              collapsed && 'rotate-180'
-            )}
-          />
-        </button>
+        ) : user ? (
+          <Tooltip delayDuration={0}>
+            <TooltipTrigger asChild>
+              <div className="sidebar-user-avatar mx-auto cursor-default">
+                {user.name.charAt(0)}
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="right">
+              <div className="font-semibold text-xs">{user.name}</div>
+              <div className="text-[10px] text-slate-400">{ROLE_LABELS[user.role]}</div>
+            </TooltipContent>
+          </Tooltip>
+        ) : null}
       </div>
     </>
   );
@@ -184,7 +374,12 @@ export default function Sidebar({
           mobileOpen ? 'sidebar-mobile-open' : 'sidebar-mobile-closed'
         )}
       >
-        <button className="sidebar-mobile-close" onClick={onMobileClose} type="button">
+        <button
+          className="sidebar-mobile-close"
+          onClick={onMobileClose}
+          type="button"
+          title="Tutup Menu"
+        >
           <X size={18} />
         </button>
         {renderContent()}
@@ -203,15 +398,21 @@ export default function Sidebar({
   );
 }
 
-export function MobileMenuButton({ onClick }: { onClick: () => void }) {
+export function MobileMenuButton({
+  onClick,
+  isOpen = false,
+}: {
+  onClick: () => void;
+  isOpen?: boolean;
+}) {
   return (
     <button
       className="mobile-menu-btn"
       onClick={onClick}
-      title="Buka Menu"
+      title={isOpen ? 'Tutup Menu' : 'Buka Menu'}
       type="button"
     >
-      <Menu size={18} />
+      <LayoutGrid size={18} />
     </button>
   );
 }

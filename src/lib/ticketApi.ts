@@ -30,257 +30,17 @@ export class TicketConflictError extends Error {
   }
 }
 
-// Default Fallback Mock Data for preview & offline development
-const INITIAL_MOCK_ADMINS: CsAdmin[] = [
-  { id: 'admin-1', name: 'Andi Pratama', email: 'andi.pratama@bps.go.id', role: 'Petugas CS 1', isOnline: true, activeTicketCount: 2 },
-  { id: 'admin-2', name: 'Rina Sasmita', email: 'rina.sasmita@bps.go.id', role: 'Petugas CS 2', isOnline: true, activeTicketCount: 1 },
-  { id: 'admin-3', name: 'Fajar Nugroho', email: 'fajar.nugroho@bps.go.id', role: 'Supervisor CS', isOnline: false, activeTicketCount: 0 },
-];
+// Default Fallback Data (Kosong / Tanpa data dummy)
+const INITIAL_MOCK_ADMINS: CsAdmin[] = [];
+const INITIAL_MOCK_TICKETS: Ticket[] = [];
+const INITIAL_MOCK_MESSAGES: Record<string, TicketMessage[]> = {};
+const INITIAL_MOCK_EVENTS: Record<string, TicketEvent[]> = {};
 
-const INITIAL_MOCK_TICKETS: Ticket[] = [
-  {
-    id: 'tk-101',
-    ticketNumber: 'TK-101',
-    customerPhone: '081271829304',
-    customerName: 'Budi Santoso',
-    status: 'WAITING',
-    adminId: null,
-    adminName: null,
-    priority: 'HIGH',
-    unreadCount: 2,
-    lastMessage: 'Halo selamat pagi admin BPS Bangka, saya ingin menanyakan data kemiskinan tahun 2024 kecamatan Merawang apakah sudah tersedia?',
-    lastMessageAt: new Date(Date.now() - 4 * 60 * 1000).toISOString(),
-    createdAt: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
-    updatedAt: new Date(Date.now() - 4 * 60 * 1000).toISOString(),
-  },
-  {
-    id: 'tk-102',
-    ticketNumber: 'TK-102',
-    customerPhone: '085299182311',
-    customerName: 'Siti Rahmawati (Bappeda Bangka)',
-    status: 'ACTIVE',
-    adminId: 'admin-1',
-    adminName: 'Andi Pratama',
-    priority: 'NORMAL',
-    unreadCount: 0,
-    lastMessage: 'Baik Ibu Siti, data pertumbuhan ekonomi triwulan IV sudah kami kirimkan melalui file terlampir.',
-    lastMessageAt: new Date(Date.now() - 8 * 60 * 1000).toISOString(),
-    createdAt: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
-    updatedAt: new Date(Date.now() - 8 * 60 * 1000).toISOString(),
-  },
-  {
-    id: 'tk-103',
-    ticketNumber: 'TK-103',
-    customerPhone: '081388271109',
-    customerName: 'Hendro Wijaya',
-    status: 'PENDING',
-    adminId: 'admin-1',
-    adminName: 'Andi Pratama',
-    priority: 'NORMAL',
-    unreadCount: 0,
-    lastMessage: 'Kami sedang melakukan konfirmasi angka agregat ke Seksi Neraca Wilayah dan Analisis Statistik.',
-    lastMessageAt: new Date(Date.now() - 35 * 60 * 1000).toISOString(),
-    pendingReason: 'Menunggu validasi angka PDRB per kapita dari seksi Neraca Wilayah',
-    createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
-    updatedAt: new Date(Date.now() - 35 * 60 * 1000).toISOString(),
-  },
-  {
-    id: 'tk-104',
-    ticketNumber: 'TK-104',
-    customerPhone: '087812903341',
-    customerName: 'Dian Permata (Mahasiswa UBB)',
-    status: 'RESOLVED',
-    adminId: 'admin-2',
-    adminName: 'Rina Sasmita',
-    priority: 'LOW',
-    unreadCount: 0,
-    lastMessage: 'Sama-sama Kak Dian, semoga sukses untuk skripsinya!',
-    lastMessageAt: new Date(Date.now() - 120 * 60 * 1000).toISOString(),
-    resolveNotes: 'Permintaan data Indeks Pembangunan Manusia (IPM) 2020-2024 telah dipenuhi melalui tautan publikasi resmi.',
-    createdAt: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
-    updatedAt: new Date(Date.now() - 120 * 60 * 1000).toISOString(),
-  },
-  {
-    id: 'tk-105',
-    ticketNumber: 'TK-105',
-    customerPhone: '082199348123',
-    customerName: 'H. Ruslan Effendi',
-    status: 'CLOSED',
-    adminId: 'admin-1',
-    adminName: 'Andi Pratama',
-    priority: 'NORMAL',
-    unreadCount: 0,
-    lastMessage: 'Percakapan telah diselesaikan dan ditutup.',
-    lastMessageAt: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
-    closeReason: 'Konsultasi selesai secara tuntas.',
-    createdAt: new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString(),
-    updatedAt: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
-  },
-];
-
-const INITIAL_MOCK_MESSAGES: Record<string, TicketMessage[]> = {
-  'tk-101': [
-    {
-      id: 'msg-101-1',
-      ticketId: 'tk-101',
-      senderType: 'USER',
-      message: 'Halo, selamat pagi. Saya butuh data statistik kemiskinan terbaru.',
-      messageType: 'TEXT',
-      createdAt: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
-      isRead: true,
-    },
-    {
-      id: 'msg-101-2',
-      ticketId: 'tk-101',
-      senderType: 'SYSTEM',
-      message: 'Pengguna meminta berbicara dengan Petugas CS (Mode Human). Tiket dibuat otomatis.',
-      messageType: 'TEXT',
-      createdAt: new Date(Date.now() - 14 * 60 * 1000).toISOString(),
-    },
-    {
-      id: 'msg-101-3',
-      ticketId: 'tk-101',
-      senderType: 'USER',
-      message: 'Halo selamat pagi admin BPS Bangka, saya ingin menanyakan data kemiskinan tahun 2024 kecamatan Merawang apakah sudah tersedia?',
-      messageType: 'TEXT',
-      createdAt: new Date(Date.now() - 4 * 60 * 1000).toISOString(),
-      isRead: false,
-    },
-  ],
-  'tk-102': [
-    {
-      id: 'msg-102-1',
-      ticketId: 'tk-102',
-      senderType: 'USER',
-      message: 'Selamat pagi Mas Andi, perkenalkan saya Siti dari Bappeda Bangka.',
-      messageType: 'TEXT',
-      createdAt: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
-      isRead: true,
-    },
-    {
-      id: 'msg-102-2',
-      ticketId: 'tk-102',
-      senderType: 'ADMIN',
-      senderId: 'admin-1',
-      senderName: 'Andi Pratama',
-      message: 'Selamat pagi Ibu Siti! Salam sehat dari BPS Kabupaten Bangka. Ada yang dapat kami bantu untuk data perencanaan daerah?',
-      messageType: 'TEXT',
-      createdAt: new Date(Date.now() - 40 * 60 * 1000).toISOString(),
-      isRead: true,
-    },
-    {
-      id: 'msg-102-3',
-      ticketId: 'tk-102',
-      senderType: 'USER',
-      message: 'Kami memerlukan rincian tabel pertumbuhan ekonomi sektor pertanian dan pertambangan Triwulan IV 2024 untuk bahan ekspose bupati.',
-      messageType: 'TEXT',
-      createdAt: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
-      isRead: true,
-    },
-    {
-      id: 'msg-102-4',
-      ticketId: 'tk-102',
-      senderType: 'ADMIN',
-      senderId: 'admin-1',
-      senderName: 'Andi Pratama',
-      message: 'Baik Ibu Siti, data pertumbuhan ekonomi triwulan IV sudah kami kirimkan melalui file terlampir.',
-      messageType: 'TEXT',
-      createdAt: new Date(Date.now() - 8 * 60 * 1000).toISOString(),
-      isRead: true,
-    },
-  ],
-  'tk-103': [
-    {
-      id: 'msg-103-1',
-      ticketId: 'tk-103',
-      senderType: 'USER',
-      message: 'Mohon info mengenai nilai PDRB per kapita atas dasar harga berlaku tahun 2024.',
-      messageType: 'TEXT',
-      createdAt: new Date(Date.now() - 120 * 60 * 1000).toISOString(),
-      isRead: true,
-    },
-    {
-      id: 'msg-103-2',
-      ticketId: 'tk-103',
-      senderType: 'ADMIN',
-      senderId: 'admin-1',
-      senderName: 'Andi Pratama',
-      message: 'Kami sedang melakukan konfirmasi angka agregat ke Seksi Neraca Wilayah dan Analisis Statistik.',
-      messageType: 'TEXT',
-      createdAt: new Date(Date.now() - 35 * 60 * 1000).toISOString(),
-      isRead: true,
-    },
-  ],
-};
-
-const INITIAL_MOCK_EVENTS: Record<string, TicketEvent[]> = {
-  'tk-101': [
-    {
-      id: 'evt-101-1',
-      ticketId: 'tk-101',
-      eventType: 'CREATED',
-      actorType: 'USER',
-      notes: 'Tiket dibuat melalui pesan masuk WhatsApp dengan trigger Human Request',
-      createdAt: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
-    },
-  ],
-  'tk-102': [
-    {
-      id: 'evt-102-1',
-      ticketId: 'tk-102',
-      eventType: 'CREATED',
-      actorType: 'USER',
-      notes: 'Tiket dibuat dari pengguna WhatsApp Bappeda Bangka',
-      createdAt: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
-    },
-    {
-      id: 'evt-102-2',
-      ticketId: 'tk-102',
-      eventType: 'ASSIGNED',
-      actorType: 'ADMIN',
-      actorId: 'admin-1',
-      actorName: 'Andi Pratama',
-      notes: 'Tiket diambil oleh CS Andi Pratama',
-      createdAt: new Date(Date.now() - 42 * 60 * 1000).toISOString(),
-    },
-    {
-      id: 'evt-102-3',
-      ticketId: 'tk-102',
-      eventType: 'STATUS_CHANGE',
-      actorType: 'ADMIN',
-      actorId: 'admin-1',
-      actorName: 'Andi Pratama',
-      notes: 'Status tiket berubah menjadi ACTIVE',
-      createdAt: new Date(Date.now() - 40 * 60 * 1000).toISOString(),
-    },
-  ],
-  'tk-103': [
-    {
-      id: 'evt-103-1',
-      ticketId: 'tk-103',
-      eventType: 'CREATED',
-      actorType: 'USER',
-      notes: 'Tiket dibuat dari nomor 081388271109',
-      createdAt: new Date(Date.now() - 120 * 60 * 1000).toISOString(),
-    },
-    {
-      id: 'evt-103-2',
-      ticketId: 'tk-103',
-      eventType: 'PENDING',
-      actorType: 'ADMIN',
-      actorId: 'admin-1',
-      actorName: 'Andi Pratama',
-      notes: 'Alasan pending: Menunggu validasi angka PDRB per kapita dari seksi Neraca Wilayah',
-      createdAt: new Date(Date.now() - 35 * 60 * 1000).toISOString(),
-    },
-  ],
-};
-
-// In-Memory Storage for realistic Mock operations
-let mockTickets = [...INITIAL_MOCK_TICKETS];
-let mockMessages = { ...INITIAL_MOCK_MESSAGES };
-let mockEvents = { ...INITIAL_MOCK_EVENTS };
-let mockAdmins = [...INITIAL_MOCK_ADMINS];
+// In-Memory Storage
+let mockTickets: Ticket[] = [];
+let mockMessages: Record<string, TicketMessage[]> = {};
+let mockEvents: Record<string, TicketEvent[]> = {};
+let mockAdmins: CsAdmin[] = [];
 let mockSettings: CsSettings = {
   autoCloseMinutes: 15,
   soundEnabled: true,
@@ -308,12 +68,17 @@ async function apiRequest<T>(
     fullUrl = `${RAW_API_URL}${cleanPath}`;
   }
 
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 6000);
+
   try {
     const res = await fetch(fullUrl, {
       cache: 'no-store',
+      signal: options.signal || controller.signal,
       ...options,
       headers,
     });
+    clearTimeout(timeoutId);
 
     if (res.status === 409) {
       const errJson = await res.json().catch(() => ({}));
@@ -330,11 +95,11 @@ async function apiRequest<T>(
     console.warn(`[TicketApi] HTTP ${res.status} pada ${fullUrl}`);
     return { success: false, error: `HTTP ${res.status}` };
   } catch (err) {
+    clearTimeout(timeoutId);
     if (err instanceof TicketConflictError) {
       throw err;
     }
     // Network fail or server down -> mark as offline
-    console.info(`[TicketApi] Menggunakan mode fallback mock (Backend ${RAW_API_URL} offline/unreachable)`);
     return { success: false, error: 'OFFLINE_FALLBACK' };
   }
 }

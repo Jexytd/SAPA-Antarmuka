@@ -6,8 +6,28 @@ import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import AppLayout from '@/components/layout/AppLayout';
 import Header from '@/components/layout/Header';
-import { Button, Toast, EmptyState } from '@/components/ui';
-import { DatasetRepo, RecordRepo, subscribe } from '@/lib/repository';
+import { Button, Toast, EmptyState, ServerOfflineState } from '@/components/ui';
+import { Badge } from '@/components/ui/badge';
+import { Card, CardContent } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Input } from '@/components/ui/input';
+import {
+  DatasetRepo,
+  RecordRepo,
+  subscribe,
+  getBackendStatus,
+  subscribeBackendStatus,
+  syncWithBackend,
+  BackendConnectionState,
+} from '@/lib/repository';
 import { Dataset, DataRecord, DataStatus } from '@/lib/types';
 import {
   AlertTriangle,
@@ -48,7 +68,12 @@ export default function AnomalyPage() {
   const { isAuthenticated, isLoading, user } = useAuth();
   const router = useRouter();
 
+  const [backendState, setBackendState] = useState<BackendConnectionState>(() => getBackendStatus());
+  const [isRetrying, setIsRetrying] = useState(false);
+
   const [datasets, setDatasets] = useState<Dataset[]>(() => {
+    const status = getBackendStatus();
+    if (status.hasCheckedInitial && !status.isConnected) return [];
     try {
       return DatasetRepo.getAll().filter((d) => d.status !== DataStatus.ARCHIVED);
     } catch {
@@ -57,6 +82,8 @@ export default function AnomalyPage() {
   });
 
   const [allRecords, setAllRecords] = useState<DataRecord[]>(() => {
+    const status = getBackendStatus();
+    if (status.hasCheckedInitial && !status.isConnected) return [];
     try {
       return RecordRepo.getAll().filter((r) => !r.is_deleted);
     } catch {
@@ -80,13 +107,50 @@ export default function AnomalyPage() {
     }
 
     function loadData() {
+      const currentStatus = getBackendStatus();
+      if (currentStatus.hasCheckedInitial && !currentStatus.isConnected) {
+        setDatasets([]);
+        setAllRecords([]);
+        return;
+      }
       setDatasets(DatasetRepo.getAll().filter((d) => d.status !== DataStatus.ARCHIVED));
       setAllRecords(RecordRepo.getAll().filter((r) => !r.is_deleted));
     }
 
-    const unsub = subscribe(loadData);
-    return unsub;
+    const unsubRepo = subscribe(loadData);
+    const unsubStatus = subscribeBackendStatus((state) => {
+      setBackendState(state);
+      if (state.isConnected) {
+        setDatasets(DatasetRepo.getAll().filter((d) => d.status !== DataStatus.ARCHIVED));
+        setAllRecords(RecordRepo.getAll().filter((r) => !r.is_deleted));
+      } else if (state.hasCheckedInitial) {
+        setDatasets([]);
+        setAllRecords([]);
+      }
+    });
+
+    if (!getBackendStatus().hasCheckedInitial) {
+      syncWithBackend().finally(() => {
+        loadData();
+      });
+    } else {
+      loadData();
+    }
+
+    return () => {
+      unsubRepo();
+      unsubStatus();
+    };
   }, [isAuthenticated, isLoading, router]);
+
+  const handleRetry = async () => {
+    setIsRetrying(true);
+    try {
+      await syncWithBackend();
+    } finally {
+      setIsRetrying(false);
+    }
+  };
 
   // Comprehensive anomaly detection logic
   const anomalies = useMemo(() => {
@@ -202,6 +266,27 @@ export default function AnomalyPage() {
 
   if (isLoading || !isAuthenticated) return null;
 
+  const isOffline = backendState.hasCheckedInitial && !backendState.isConnected;
+
+  if (isOffline) {
+    return (
+      <AppLayout>
+        <Header
+          title="Verifikasi Data"
+          subtitle="Pemeriksaan dan persetujuan data statistik lapangan yang mengalami fluktuasi signifikan"
+        />
+        <div className="page-content" style={{ maxWidth: 1180, padding: '24px 16px' }}>
+          <ServerOfflineState
+            title="Server Backend Sedang Offline"
+            message="Data anomali dan verifikasi tidak dapat ditampilkan karena server backend tidak aktif atau offline, dan database saat ini masih menggunakan penyimpanan lokal."
+            onRetry={handleRetry}
+            isRetrying={isRetrying}
+          />
+        </div>
+      </AppLayout>
+    );
+  }
+
   return (
     <AppLayout>
       <Header
@@ -219,113 +304,53 @@ export default function AnomalyPage() {
             marginBottom: 24,
           }}
         >
-          <div
-            style={{
-              background: '#ffffff',
-              border: '1px solid var(--slate-200)',
-              borderRadius: 'var(--radius-xl)',
-              padding: '18px 20px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              boxShadow: 'var(--shadow-subtle)',
-            }}
-          >
-            <div>
-              <p style={{ fontSize: 12.5, color: 'var(--slate-500)', margin: 0, fontWeight: 500 }}>
-                Total Perlu Verifikasi
-              </p>
-              <h3 style={{ fontSize: 24, fontWeight: 700, margin: '4px 0 0', color: 'var(--slate-900)' }}>
-                {anomalies.length} Data
-              </h3>
-            </div>
-            <div
-              style={{
-                width: 44,
-                height: 44,
-                borderRadius: 'var(--radius-lg)',
-                background: '#fff7ed',
-                color: '#c2410c',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <ShieldAlert size={22} />
-            </div>
-          </div>
+          <Card className="p-0 border-slate-200">
+            <CardContent className="p-5 flex items-center justify-between">
+              <div>
+                <p className="text-xs text-slate-500 font-medium m-0">
+                  Total Perlu Verifikasi
+                </p>
+                <h3 className="text-2xl font-bold mt-1 mb-0 text-slate-900">
+                  {anomalies.length} Data
+                </h3>
+              </div>
+              <div className="w-11 h-11 rounded-xl bg-orange-50 text-orange-700 flex items-center justify-center">
+                <ShieldAlert size={22} />
+              </div>
+            </CardContent>
+          </Card>
 
-          <div
-            style={{
-              background: '#ffffff',
-              border: '1px solid var(--slate-200)',
-              borderRadius: 'var(--radius-xl)',
-              padding: '18px 20px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              boxShadow: 'var(--shadow-subtle)',
-            }}
-          >
-            <div>
-              <p style={{ fontSize: 12.5, color: 'var(--slate-500)', margin: 0, fontWeight: 500 }}>
-                Perlu Konfirmasi / Aksi
-              </p>
-              <h3 style={{ fontSize: 24, fontWeight: 700, margin: '4px 0 0', color: pendingCount > 0 ? '#b91c1c' : '#059669' }}>
-                {pendingCount} Peringatan
-              </h3>
-            </div>
-            <div
-              style={{
-                width: 44,
-                height: 44,
-                borderRadius: 'var(--radius-lg)',
-                background: pendingCount > 0 ? '#fef2f2' : '#ecfdf5',
-                color: pendingCount > 0 ? '#b91c1c' : '#059669',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <AlertTriangle size={22} />
-            </div>
-          </div>
+          <Card className="p-0 border-slate-200">
+            <CardContent className="p-5 flex items-center justify-between">
+              <div>
+                <p className="text-xs text-slate-500 font-medium m-0">
+                  Perlu Konfirmasi / Aksi
+                </p>
+                <h3 className={`text-2xl font-bold mt-1 mb-0 ${pendingCount > 0 ? 'text-red-700' : 'text-emerald-700'}`}>
+                  {pendingCount} Peringatan
+                </h3>
+              </div>
+              <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${pendingCount > 0 ? 'bg-red-50 text-red-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                <AlertTriangle size={22} />
+              </div>
+            </CardContent>
+          </Card>
 
-          <div
-            style={{
-              background: '#ffffff',
-              border: '1px solid var(--slate-200)',
-              borderRadius: 'var(--radius-xl)',
-              padding: '18px 20px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              boxShadow: 'var(--shadow-subtle)',
-            }}
-          >
-            <div>
-              <p style={{ fontSize: 12.5, color: 'var(--slate-500)', margin: 0, fontWeight: 500 }}>
-                Dikonfirmasi Valid Lapangan
-              </p>
-              <h3 style={{ fontSize: 24, fontWeight: 700, margin: '4px 0 0', color: '#059669' }}>
-                {confirmedCount} Disetujui
-              </h3>
-            </div>
-            <div
-              style={{
-                width: 44,
-                height: 44,
-                borderRadius: 'var(--radius-lg)',
-                background: '#ecfdf5',
-                color: '#059669',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <CheckCircle2 size={22} />
-            </div>
-          </div>
+          <Card className="p-0 border-slate-200">
+            <CardContent className="p-5 flex items-center justify-between">
+              <div>
+                <p className="text-xs text-slate-500 font-medium m-0">
+                  Dikonfirmasi Valid Lapangan
+                </p>
+                <h3 className="text-2xl font-bold mt-1 mb-0 text-emerald-700">
+                  {confirmedCount} Disetujui
+                </h3>
+              </div>
+              <div className="w-11 h-11 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center">
+                <CheckCircle2 size={22} />
+              </div>
+            </CardContent>
+          </Card>
         </div>
 
         {/* Section List Verifikasi Data */}
@@ -348,69 +373,31 @@ export default function AnomalyPage() {
                   size={14}
                   style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--slate-400)' }}
                 />
-                <input
+                <Input
                   type="text"
-                  className="text-input"
                   placeholder="Cari dataset / indikator..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  style={{ paddingLeft: 32, height: 36, fontSize: 12.5 }}
+                  className="pl-8 h-9 text-xs"
                 />
               </div>
 
-              <div style={{ display: 'flex', background: 'var(--slate-100)', padding: 3, borderRadius: 'var(--radius-md)', border: '1px solid var(--slate-200)' }}>
-                <button
-                  type="button"
-                  onClick={() => setFilterStatus('ALL')}
-                  style={{
-                    padding: '5px 12px',
-                    fontSize: 12,
-                    fontWeight: 600,
-                    border: 'none',
-                    borderRadius: 'var(--radius-sm)',
-                    cursor: 'pointer',
-                    background: filterStatus === 'ALL' ? '#ffffff' : 'transparent',
-                    color: filterStatus === 'ALL' ? 'var(--primary-700)' : 'var(--slate-600)',
-                    boxShadow: filterStatus === 'ALL' ? 'var(--shadow-subtle)' : 'none',
-                  }}
-                >
-                  Semua ({anomalies.length})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFilterStatus('PENDING')}
-                  style={{
-                    padding: '5px 12px',
-                    fontSize: 12,
-                    fontWeight: 600,
-                    border: 'none',
-                    borderRadius: 'var(--radius-sm)',
-                    cursor: 'pointer',
-                    background: filterStatus === 'PENDING' ? '#ffffff' : 'transparent',
-                    color: filterStatus === 'PENDING' ? '#b91c1c' : 'var(--slate-600)',
-                    boxShadow: filterStatus === 'PENDING' ? 'var(--shadow-subtle)' : 'none',
-                  }}
-                >
-                  Perlu Aksi ({pendingCount})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFilterStatus('CONFIRMED')}
-                  style={{
-                    padding: '5px 12px',
-                    fontSize: 12,
-                    fontWeight: 600,
-                    border: 'none',
-                    borderRadius: 'var(--radius-sm)',
-                    cursor: 'pointer',
-                    background: filterStatus === 'CONFIRMED' ? '#ffffff' : 'transparent',
-                    color: filterStatus === 'CONFIRMED' ? '#059669' : 'var(--slate-600)',
-                    boxShadow: filterStatus === 'CONFIRMED' ? 'var(--shadow-subtle)' : 'none',
-                  }}
-                >
-                  Disetujui ({confirmedCount})
-                </button>
-              </div>
+              <Tabs
+                value={filterStatus}
+                onValueChange={(v) => setFilterStatus(v as 'ALL' | 'PENDING' | 'CONFIRMED')}
+              >
+                <TabsList className="h-9">
+                  <TabsTrigger value="ALL" className="text-xs">
+                    Semua ({anomalies.length})
+                  </TabsTrigger>
+                  <TabsTrigger value="PENDING" className="text-xs">
+                    Perlu Aksi ({pendingCount})
+                  </TabsTrigger>
+                  <TabsTrigger value="CONFIRMED" className="text-xs">
+                    Disetujui ({confirmedCount})
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
             </div>
           </div>
 
@@ -628,77 +615,54 @@ export default function AnomalyPage() {
       </div>
 
       {/* Modal Konfirmasi Verifikasi Data */}
-      {approveTarget && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(15, 23, 42, 0.6)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 999,
-            padding: 16,
-            backdropFilter: 'blur(3px)',
-          }}
-          onClick={() => setApproveTarget(null)}
-        >
-          <div
-            style={{
-              background: '#ffffff',
-              borderRadius: 'var(--radius-xl)',
-              maxWidth: 500,
-              width: '100%',
-              padding: '24px',
-              boxShadow: 'var(--shadow-xl)',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-              <div style={{ width: 38, height: 38, borderRadius: '50%', background: '#ecfdf5', color: '#059669', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <CheckCircle2 size={20} />
+      <Dialog open={!!approveTarget} onOpenChange={(open) => !open && setApproveTarget(null)}>
+        {approveTarget && (
+          <DialogContent className="sm:max-w-[500px]">
+            <DialogHeader>
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
+                  <CheckCircle2 size={20} />
+                </div>
+                <div>
+                  <DialogTitle>Konfirmasi Verifikasi Data Lapangan</DialogTitle>
+                  <DialogDescription>
+                    Menyatakan angka periode {approveTarget.period} adalah data riil resmi BPS
+                  </DialogDescription>
+                </div>
               </div>
-              <div>
-                <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: 'var(--slate-900)' }}>
-                  Konfirmasi Verifikasi Data Lapangan
-                </h3>
-                <p style={{ margin: '2px 0 0', fontSize: 12.5, color: 'var(--slate-500)' }}>
-                  Menyatakan angka periode {approveTarget.period} adalah data riil resmi BPS
-                </p>
-              </div>
-            </div>
+            </DialogHeader>
 
-            <div style={{ background: '#f8fafc', padding: 12, borderRadius: 'var(--radius-md)', marginBottom: 16, fontSize: 13, lineHeight: 1.5 }}>
+            <div className="bg-slate-50 p-3 rounded-lg text-xs leading-relaxed border border-slate-200 space-y-1">
               <div><strong>Dataset:</strong> {approveTarget.datasetName}</div>
               <div><strong>Indikator:</strong> {approveTarget.indicator} ({approveTarget.period})</div>
               <div><strong>Nilai:</strong> {approveTarget.currentValue.toLocaleString('id-ID')} {approveTarget.unit} ({approveTarget.changePercent > 0 ? '+' : ''}{approveTarget.changePercent.toFixed(1)}%)</div>
             </div>
 
-            <div style={{ marginBottom: 16 }}>
-              <label className="input-label" htmlFor="appnote">
+            <div>
+              <label className="input-label mb-1.5 block text-xs font-semibold" htmlFor="appnote">
                 Keterangan / Catatan Verifikasi Resmi BPS
               </label>
               <textarea
                 id="appnote"
                 rows={3}
-                className="textarea-input"
+                className="textarea-input w-full text-xs"
                 placeholder="Misal: Peningkatan tajam terjadi karena pembukaan sektor tambang/industri baru pada tahun bersangkutan..."
                 value={approvalNote}
                 onChange={(e) => setApprovalNote(e.target.value)}
               />
             </div>
 
-            <div className="form-actions" style={{ margin: 0, paddingTop: 16 }}>
+            <DialogFooter className="gap-2 sm:gap-2">
               <Button variant="secondary" size="md" onClick={() => setApproveTarget(null)}>
                 Batal
               </Button>
               <Button variant="success" size="md" icon={<CheckCircle2 size={14} />} onClick={submitApprove}>
                 Ya, Setujui Data Valid
               </Button>
-            </div>
-          </div>
-        </div>
-      )}
+            </DialogFooter>
+          </DialogContent>
+        )}
+      </Dialog>
 
       {toast && (
         <Toast
