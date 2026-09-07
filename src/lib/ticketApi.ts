@@ -37,6 +37,15 @@ const INITIAL_MOCK_MESSAGES: Record<string, TicketMessage[]> = {};
 const INITIAL_MOCK_EVENTS: Record<string, TicketEvent[]> = {};
 
 // In-Memory Storage
+export const DEFAULT_CS_TEMPLATES = {
+  template_waiting: '🎫 *Tiket Bantuan Customer Service Dibuat*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nNomor Tiket: *#{ticket_number}*\nStatus: *Menunggu Petugas (WAITING)*\n\nPermintaan Anda telah kami terima. Petugas Customer Service BPS Kab. Bangka akan segera bergabung dalam obrolan ini.\n\n_Ketik #selesai kapan saja jika Anda ingin membatalkan dan kembali ke asisten bot otomatis._',
+  template_assigned: '💬 *Customer Service Terhubung*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nCustomer Service *{admin_name}* telah mengambil tiket Anda (*#{ticket_number}*) dan siap melayani.\n\nSilakan sampaikan pertanyaan atau kendala Anda secara rinci.',
+  template_pending: '⏳ *Status Tiket Ditunda (PENDING)*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nTiket *#{ticket_number}* saat ini berstatus PENDING.\n{reason}\n\nPetugas kami sedang menindaklanjuti permintaan Anda. Mohon ditunggu.',
+  template_resolved: '✅ *Konsultasi Selesai (Tiket #{ticket_number})*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nCustomer Service telah menandai percakapan ini selesai.\n\nTerima kasih telah berkonsultasi dengan Layanan PST BPS Kab. Bangka. Layanan asisten bot otomatis kini telah aktif kembali. Silakan ketik *menu* jika membutuhkan informasi lainnya.',
+  template_closed: '🔒 *Percakapan Ditutup*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nPercakapan untuk Tiket *#{ticket_number}* telah ditutup.\n\nTerima kasih telah menghubungi Layanan BPS Kab. Bangka. Asisten bot otomatis kini telah aktif kembali. Silakan ketik *menu* jika ingin memulai interaksi baru.',
+  template_admin_message: '{message}',
+};
+
 let mockTickets: Ticket[] = [];
 let mockMessages: Record<string, TicketMessage[]> = {};
 let mockEvents: Record<string, TicketEvent[]> = {};
@@ -47,6 +56,7 @@ let mockSettings: CsSettings = {
   desktopNotification: true,
   greetingTemplate: 'Halo, saya {adminName} dari Pelayanan Statistik Terpadu (PST) BPS Kabupaten Bangka. Ada yang dapat kami bantu?',
   awayMessage: 'Mohon maaf, saat ini layanan CS di luar jam operasional. Silakan tinggalkan pesan atau gunakan menu bot otomatis.',
+  ...DEFAULT_CS_TEMPLATES,
 };
 
 async function apiRequest<T>(

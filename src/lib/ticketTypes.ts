@@ -84,6 +84,14 @@ export interface CsSettings {
   desktopNotification: boolean;
   greetingTemplate: string;
   awayMessage?: string;
+  max_assigned_tickets_per_admin?: number;
+  resolved_grace_period_minutes?: number;
+  template_waiting?: string;
+  template_assigned?: string;
+  template_pending?: string;
+  template_resolved?: string;
+  template_closed?: string;
+  template_admin_message?: string;
 }
 
 export type TicketFilterTab =
