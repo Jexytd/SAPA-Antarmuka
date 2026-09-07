@@ -30,6 +30,7 @@ import {
   TicketConflictError,
   normalizeTicket,
   normalizeMessage,
+  DEFAULT_CS_TEMPLATES,
 } from '@/lib/ticketApi';
 import { useCsRealtime } from '@/lib/useCsRealtime';
 import { CsTicketList } from '@/components/cs/CsTicketList';
@@ -90,7 +91,10 @@ export default function CustomerServiceInboxPage() {
     autoCloseMinutes: 15,
     soundEnabled: true,
     desktopNotification: true,
-    greetingTemplate: 'Halo, saya petugas CS BPS Bangka. Ada yang dapat kami bantu?',
+    greetingTemplate: 'Halo, saya {adminName} dari Pelayanan Statistik Terpadu (PST) BPS Kabupaten Bangka. Ada yang dapat kami bantu?',
+    max_assigned_tickets_per_admin: 10,
+    resolved_grace_period_minutes: 60,
+    ...DEFAULT_CS_TEMPLATES,
   });
 
   // UI / Action Loading & Toast States

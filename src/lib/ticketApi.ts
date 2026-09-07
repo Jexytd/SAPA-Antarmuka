@@ -692,10 +692,18 @@ export const ticketApi = {
       const d = res.data;
       return {
         autoCloseMinutes: Number(d.auto_close_inactive_minutes || d.autoCloseMinutes || 15),
-        soundEnabled: d.soundEnabled ?? true,
-        desktopNotification: d.desktopNotification ?? true,
+        soundEnabled: d.soundEnabled !== undefined ? String(d.soundEnabled) === 'true' : true,
+        desktopNotification: d.desktopNotification !== undefined ? String(d.desktopNotification) === 'true' : true,
         greetingTemplate: d.greetingTemplate || 'Halo, saya {adminName} dari Pelayanan Statistik Terpadu (PST) BPS Kabupaten Bangka. Ada yang dapat kami bantu?',
         awayMessage: d.awayMessage || undefined,
+        max_assigned_tickets_per_admin: Number(d.max_assigned_tickets_per_admin || 10),
+        resolved_grace_period_minutes: Number(d.resolved_grace_period_minutes || 60),
+        template_waiting: d.template_waiting || DEFAULT_CS_TEMPLATES.template_waiting,
+        template_assigned: d.template_assigned || DEFAULT_CS_TEMPLATES.template_assigned,
+        template_pending: d.template_pending || DEFAULT_CS_TEMPLATES.template_pending,
+        template_resolved: d.template_resolved || DEFAULT_CS_TEMPLATES.template_resolved,
+        template_closed: d.template_closed || DEFAULT_CS_TEMPLATES.template_closed,
+        template_admin_message: d.template_admin_message || DEFAULT_CS_TEMPLATES.template_admin_message,
       };
     }
     return mockSettings;
@@ -706,18 +714,34 @@ export const ticketApi = {
     if (settings.autoCloseMinutes !== undefined) {
       payload.auto_close_inactive_minutes = String(settings.autoCloseMinutes);
     }
+    if (settings.max_assigned_tickets_per_admin !== undefined) {
+      payload.max_assigned_tickets_per_admin = String(settings.max_assigned_tickets_per_admin);
+    }
+    if (settings.resolved_grace_period_minutes !== undefined) {
+      payload.resolved_grace_period_minutes = String(settings.resolved_grace_period_minutes);
+    }
+
     const res = await apiRequest<any>('/api/cs/settings', {
       method: 'PUT',
       body: JSON.stringify({ settings: payload, ...payload }),
     });
+
     if (res.success && res.data) {
       const d = res.data;
       return {
-        autoCloseMinutes: Number(d.auto_close_inactive_minutes || d.autoCloseMinutes || 15),
+        autoCloseMinutes: Number(d.auto_close_inactive_minutes || d.autoCloseMinutes || settings.autoCloseMinutes || 15),
         soundEnabled: d.soundEnabled !== undefined ? String(d.soundEnabled) === 'true' : true,
         desktopNotification: d.desktopNotification !== undefined ? String(d.desktopNotification) === 'true' : true,
-        greetingTemplate: d.greetingTemplate || 'Halo, saya {adminName} dari Pelayanan Statistik Terpadu (PST) BPS Kabupaten Bangka. Ada yang dapat kami bantu?',
-        awayMessage: d.awayMessage || undefined,
+        greetingTemplate: d.greetingTemplate || settings.greetingTemplate || 'Halo, saya {adminName} dari Pelayanan Statistik Terpadu (PST) BPS Kabupaten Bangka. Ada yang dapat kami bantu?',
+        awayMessage: d.awayMessage || settings.awayMessage || undefined,
+        max_assigned_tickets_per_admin: Number(d.max_assigned_tickets_per_admin || 10),
+        resolved_grace_period_minutes: Number(d.resolved_grace_period_minutes || 60),
+        template_waiting: d.template_waiting || settings.template_waiting || DEFAULT_CS_TEMPLATES.template_waiting,
+        template_assigned: d.template_assigned || settings.template_assigned || DEFAULT_CS_TEMPLATES.template_assigned,
+        template_pending: d.template_pending || settings.template_pending || DEFAULT_CS_TEMPLATES.template_pending,
+        template_resolved: d.template_resolved || settings.template_resolved || DEFAULT_CS_TEMPLATES.template_resolved,
+        template_closed: d.template_closed || settings.template_closed || DEFAULT_CS_TEMPLATES.template_closed,
+        template_admin_message: d.template_admin_message || settings.template_admin_message || DEFAULT_CS_TEMPLATES.template_admin_message,
       };
     }
     mockSettings = { ...mockSettings, ...settings };

@@ -2,9 +2,10 @@
 // SAPA BPS 1901 IN — Customer Service Modals & Dialogs
 // ============================================================
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Modal, Button, TextareaField, Select } from '@/components/ui';
 import { Ticket, CsAdmin, CsSettings } from '@/lib/ticketTypes';
+import { DEFAULT_CS_TEMPLATES } from '@/lib/ticketApi';
 import {
   CheckCircle2,
   Clock,
@@ -13,6 +14,10 @@ import {
   Bot,
   RotateCcw,
   ShieldAlert,
+  Settings,
+  MessageSquare,
+  Sparkles,
+  Info,
 } from 'lucide-react';
 
 // ------------------------------------------------------------
@@ -482,8 +487,17 @@ export function CsSettingsModal({
   settings,
   onSave,
 }: SettingsModalProps) {
+  const [activeTab, setActiveTab] = useState<'general' | 'templates'>('general');
   const [form, setForm] = useState<CsSettings>(settings);
   const [loading, setLoading] = useState(false);
+  const [resetSuccess, setResetSuccess] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setForm(settings);
+      setResetSuccess(false);
+    }
+  }, [settings, open]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -496,68 +510,354 @@ export function CsSettingsModal({
     }
   };
 
+  const handleResetTemplates = () => {
+    setForm((prev) => ({
+      ...prev,
+      ...DEFAULT_CS_TEMPLATES,
+    }));
+    setResetSuccess(true);
+    setTimeout(() => setResetSuccess(false), 3000);
+  };
+
   return (
     <Modal
       open={open}
       onClose={onClose}
       title="Pengaturan Customer Service"
-      maxWidth="540px"
+      maxWidth="680px"
       actions={
-        <div className="flex justify-end gap-2.5 w-full">
-          <Button variant="secondary" onClick={onClose} disabled={loading}>
-            Tutup
-          </Button>
-          <Button variant="primary" onClick={handleSubmit} loading={loading}>
-            Simpan Pengaturan
-          </Button>
+        <div className="flex items-center justify-between w-full">
+          <div>
+            {activeTab === 'templates' && (
+              <button
+                type="button"
+                onClick={handleResetTemplates}
+                className="text-xs text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 flex items-center gap-1.5 transition-colors"
+                title="Pulihkan seluruh template ke standar BPS"
+              >
+                <RotateCcw size={13} />
+                <span>Reset ke Standar BPS</span>
+              </button>
+            )}
+            {resetSuccess && (
+              <span className="text-[11px] text-emerald-600 font-medium ml-2">
+                ✓ Template dikembalikan ke default
+              </span>
+            )}
+          </div>
+          <div className="flex justify-end gap-2.5">
+            <Button variant="secondary" onClick={onClose} disabled={loading}>
+              Tutup
+            </Button>
+            <Button variant="primary" onClick={handleSubmit} loading={loading}>
+              Simpan Pengaturan
+            </Button>
+          </div>
         </div>
       }
     >
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4 py-1">
-        <div>
-          <label className="input-label mb-1">Durasi Auto-Close Tiket Inaktif</label>
-          <div className="flex items-center gap-2">
-            <input
-              type="number"
-              min="5"
-              max="120"
-              className="text-input w-28"
-              value={form.autoCloseMinutes}
-              onChange={(e) =>
-                setForm({ ...form, autoCloseMinutes: Number(e.target.value) || 15 })
-              }
-            />
-            <span className="text-xs text-slate-600">
-              menit setelah pesan terakhir
+      <div className="flex flex-col gap-4 py-1">
+        {/* Tab Navigation */}
+        <div className="flex border-b border-slate-200 dark:border-slate-700">
+          <button
+            type="button"
+            onClick={() => setActiveTab('general')}
+            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold border-b-2 transition-colors ${
+              activeTab === 'general'
+                ? 'border-blue-600 text-blue-600 dark:border-blue-400 dark:text-blue-400'
+                : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+            }`}
+          >
+            <Settings size={14} />
+            Pengaturan Umum
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('templates')}
+            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold border-b-2 transition-colors ${
+              activeTab === 'templates'
+                ? 'border-blue-600 text-blue-600 dark:border-blue-400 dark:text-blue-400'
+                : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+            }`}
+          >
+            <MessageSquare size={14} />
+            Template Pesan WhatsApp
+            <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-bold">
+              6
             </span>
+          </button>
+        </div>
+
+        {/* Tab Content: General */}
+        {activeTab === 'general' && (
+          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="input-label mb-1">Durasi Auto-Close Inaktif</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min="5"
+                    max="120"
+                    className="text-input w-24"
+                    value={form.autoCloseMinutes}
+                    onChange={(e) =>
+                      setForm({ ...form, autoCloseMinutes: Number(e.target.value) || 15 })
+                    }
+                  />
+                  <span className="text-xs text-slate-600 dark:text-slate-400">
+                    menit
+                  </span>
+                </div>
+                <p className="input-hint mt-1 text-[11px]">
+                  Tiket inaktif otomatis ditutup setelah menit ini terlewati.
+                </p>
+              </div>
+
+              <div>
+                <label className="input-label mb-1">Maks. Tiket per Petugas</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min="1"
+                    max="50"
+                    className="text-input w-24"
+                    value={form.max_assigned_tickets_per_admin || 10}
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        max_assigned_tickets_per_admin: Number(e.target.value) || 10,
+                      })
+                    }
+                  />
+                  <span className="text-xs text-slate-600 dark:text-slate-400">
+                    tiket aktif
+                  </span>
+                </div>
+                <p className="input-hint mt-1 text-[11px]">
+                  Batas penugasan serentak untuk setiap petugas CS.
+                </p>
+              </div>
+            </div>
+
+            <div>
+              <label className="input-label mb-1">Grace Period Status Resolved</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min="5"
+                  max="1440"
+                  className="text-input w-24"
+                  value={form.resolved_grace_period_minutes || 60}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      resolved_grace_period_minutes: Number(e.target.value) || 60,
+                    })
+                  }
+                />
+                <span className="text-xs text-slate-600 dark:text-slate-400">
+                  menit
+                </span>
+              </div>
+              <p className="input-hint mt-1 text-[11px]">
+                Waktu tunggu sebelum tiket dengan status RESOLVED otomatis berstatus CLOSED permanen.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-2 pt-2 border-t border-slate-200 dark:border-slate-700">
+              <label className="flex items-center gap-2.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.soundEnabled}
+                  onChange={(e) => setForm({ ...form, soundEnabled: e.target.checked })}
+                  className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span className="text-xs font-medium text-slate-800 dark:text-slate-200">
+                  Aktifkan Notifikasi Suara (Chime Dering Pesan & Tiket Baru)
+                </span>
+              </label>
+            </div>
+
+            <TextareaField
+              label="Template Salam Pembuka CS Otomatis"
+              rows={3}
+              value={form.greetingTemplate}
+              onChange={(e) => setForm({ ...form, greetingTemplate: e.target.value })}
+              hint="Gunakan tag {adminName} untuk menyematkan nama petugas secara dinamis."
+            />
+          </form>
+        )}
+
+        {/* Tab Content: WhatsApp Templates */}
+        {activeTab === 'templates' && (
+          <div className="flex flex-col gap-4 max-h-[60vh] overflow-y-auto pr-1">
+            <div className="p-3 rounded-lg bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200/80 dark:border-blue-800/50 flex items-start gap-2.5 text-xs text-blue-900 dark:text-blue-200">
+              <Info size={16} className="text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold mb-0.5">Pengaturan Notifikasi Otomatis WhatsApp</p>
+                Pesan di bawah ini dikirim otomatis ke nomor WhatsApp pengguna saat status tiket berubah. Tag dalam kurung kurawal seperti <code className="px-1 py-0.5 bg-blue-100 dark:bg-blue-900 rounded font-mono text-[11px]">{'{ticket_number}'}</code> akan digantikan otomatis oleh data aktual tiket.
+              </div>
+            </div>
+
+            {/* 1. template_waiting */}
+            <div className="flex flex-col gap-1.5 p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                  1. Tiket Dibuat (Status WAITING)
+                </label>
+                <div className="flex gap-1">
+                  <span className="text-[10px] bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-mono px-1.5 py-0.5 rounded">
+                    {'{ticket_number}'}
+                  </span>
+                </div>
+              </div>
+              <p className="text-[11px] text-slate-500">
+                Dikirim saat pengguna membuat tiket CS melalui bot WhatsApp.
+              </p>
+              <textarea
+                rows={4}
+                className="text-input font-mono text-xs leading-relaxed"
+                value={form.template_waiting ?? DEFAULT_CS_TEMPLATES.template_waiting}
+                onChange={(e) => setForm({ ...form, template_waiting: e.target.value })}
+                placeholder="Template saat tiket dibuat..."
+              />
+            </div>
+
+            {/* 2. template_assigned */}
+            <div className="flex flex-col gap-1.5 p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+                  2. Tiket Diambil Petugas (Status ASSIGNED)
+                </label>
+                <div className="flex gap-1">
+                  <span className="text-[10px] bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-mono px-1.5 py-0.5 rounded">
+                    {'{admin_name}'}
+                  </span>
+                  <span className="text-[10px] bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-mono px-1.5 py-0.5 rounded">
+                    {'{ticket_number}'}
+                  </span>
+                </div>
+              </div>
+              <p className="text-[11px] text-slate-500">
+                Dikirim saat petugas CS mengklik tombol &quot;Ambil Tiket&quot;.
+              </p>
+              <textarea
+                rows={4}
+                className="text-input font-mono text-xs leading-relaxed"
+                value={form.template_assigned ?? DEFAULT_CS_TEMPLATES.template_assigned}
+                onChange={(e) => setForm({ ...form, template_assigned: e.target.value })}
+                placeholder="Template saat petugas mengambil tiket..."
+              />
+            </div>
+
+            {/* 3. template_pending */}
+            <div className="flex flex-col gap-1.5 p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-yellow-500"></span>
+                  3. Tiket Ditunda (Status PENDING)
+                </label>
+                <div className="flex gap-1">
+                  <span className="text-[10px] bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-mono px-1.5 py-0.5 rounded">
+                    {'{ticket_number}'}
+                  </span>
+                  <span className="text-[10px] bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-mono px-1.5 py-0.5 rounded">
+                    {'{reason}'}
+                  </span>
+                </div>
+              </div>
+              <p className="text-[11px] text-slate-500">
+                Dikirim saat petugas mengubah tiket menjadi Tertunda (Pending).
+              </p>
+              <textarea
+                rows={4}
+                className="text-input font-mono text-xs leading-relaxed"
+                value={form.template_pending ?? DEFAULT_CS_TEMPLATES.template_pending}
+                onChange={(e) => setForm({ ...form, template_pending: e.target.value })}
+                placeholder="Template saat tiket dipending..."
+              />
+            </div>
+
+            {/* 4. template_resolved */}
+            <div className="flex flex-col gap-1.5 p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-teal-500"></span>
+                  4. Konsultasi Selesai (Status RESOLVED)
+                </label>
+                <div className="flex gap-1">
+                  <span className="text-[10px] bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-mono px-1.5 py-0.5 rounded">
+                    {'{ticket_number}'}
+                  </span>
+                </div>
+              </div>
+              <p className="text-[11px] text-slate-500">
+                Dikirim saat petugas menyelesaikan tiket sebelum grace period berakhir.
+              </p>
+              <textarea
+                rows={4}
+                className="text-input font-mono text-xs leading-relaxed"
+                value={form.template_resolved ?? DEFAULT_CS_TEMPLATES.template_resolved}
+                onChange={(e) => setForm({ ...form, template_resolved: e.target.value })}
+                placeholder="Template saat tiket diselesaikan..."
+              />
+            </div>
+
+            {/* 5. template_closed */}
+            <div className="flex flex-col gap-1.5 p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-slate-500"></span>
+                  5. Tiket Ditutup (Status CLOSED / Kembali ke Bot)
+                </label>
+                <div className="flex gap-1">
+                  <span className="text-[10px] bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-mono px-1.5 py-0.5 rounded">
+                    {'{ticket_number}'}
+                  </span>
+                </div>
+              </div>
+              <p className="text-[11px] text-slate-500">
+                Dikirim saat tiket ditutup permanen dan nomor pengguna dikembalikan ke Bot AI SAPA.
+              </p>
+              <textarea
+                rows={4}
+                className="text-input font-mono text-xs leading-relaxed"
+                value={form.template_closed ?? DEFAULT_CS_TEMPLATES.template_closed}
+                onChange={(e) => setForm({ ...form, template_closed: e.target.value })}
+                placeholder="Template saat tiket ditutup..."
+              />
+            </div>
+
+            {/* 6. template_admin_message */}
+            <div className="flex flex-col gap-1.5 p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-indigo-500"></span>
+                  6. Format Pembungkus Pesan CS (Admin Message)
+                </label>
+                <div className="flex gap-1">
+                  <span className="text-[10px] bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-mono px-1.5 py-0.5 rounded">
+                    {'{message}'}
+                  </span>
+                </div>
+              </div>
+              <p className="text-[11px] text-slate-500">
+                Format pembungkus teks yang diketikkan petugas saat membalas pesan di chat room.
+              </p>
+              <textarea
+                rows={2}
+                className="text-input font-mono text-xs leading-relaxed"
+                value={form.template_admin_message ?? DEFAULT_CS_TEMPLATES.template_admin_message}
+                onChange={(e) => setForm({ ...form, template_admin_message: e.target.value })}
+                placeholder="{message}"
+              />
+            </div>
           </div>
-          <p className="input-hint mt-1">
-            Tiket yang tidak memiliki aktivitas baru akan ditutup otomatis oleh sistem pekerja latar belakang (autoCloseWorker).
-          </p>
-        </div>
-
-        <div className="flex flex-col gap-2 pt-2 border-t border-slate-200">
-          <label className="flex items-center gap-2.5 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={form.soundEnabled}
-              onChange={(e) => setForm({ ...form, soundEnabled: e.target.checked })}
-              className="rounded border-slate-300 text-blue-600"
-            />
-            <span className="text-xs font-medium text-slate-800">
-              Aktifkan Notifikasi Suara (Chime Dering Pesan & Tiket Baru)
-            </span>
-          </label>
-        </div>
-
-        <TextareaField
-          label="Template Salam Pembuka CS Otomatis"
-          rows={3}
-          value={form.greetingTemplate}
-          onChange={(e) => setForm({ ...form, greetingTemplate: e.target.value })}
-          hint="Gunakan tag {adminName} untuk menyematkan nama Anda."
-        />
-      </form>
+        )}
+      </div>
     </Modal>
   );
 }
