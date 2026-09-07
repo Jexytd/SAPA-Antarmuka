@@ -71,6 +71,7 @@ export default function CustomerServiceInboxPage() {
   const currentAdminName = effectiveAdmin.name;
 
   const [backendState, setBackendState] = useState<BackendConnectionState>(() => getBackendStatus());
+  const [isCsOnline, setIsCsOnline] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
 
   // Core State
@@ -121,6 +122,9 @@ export default function CustomerServiceInboxPage() {
         search: searchQuery,
       });
       setTickets(res.data);
+      if (res.data) {
+        setIsCsOnline(true);
+      }
     } catch (err) {
       console.error('[CS] Gagal mengambil daftar tiket:', err);
     } finally {
@@ -133,14 +137,20 @@ export default function CustomerServiceInboxPage() {
       setBackendState(state);
       if (state.isConnected) {
         fetchTickets();
-        ticketApi.getAdmins().then(setAdmins).catch(() => {});
+        ticketApi.getAdmins().then((a) => {
+          setAdmins(a);
+          if (a.length > 0) setIsCsOnline(true);
+        }).catch(() => {});
         ticketApi.getSettings().then(setSettings).catch(() => {});
       }
     });
 
     // Panggil langsung saat inisialisasi komponen tanpa menunggu status dataset
     fetchTickets();
-    ticketApi.getAdmins().then(setAdmins).catch(() => {});
+    ticketApi.getAdmins().then((a) => {
+      setAdmins(a);
+      if (a.length > 0) setIsCsOnline(true);
+    }).catch(() => {});
     ticketApi.getSettings().then(setSettings).catch(() => {});
 
     if (!getBackendStatus().hasCheckedInitial) {
@@ -185,26 +195,56 @@ export default function CustomerServiceInboxPage() {
     loadTicketDetail(ticket.id);
   };
 
+  // Realtime safety net: sinkronisasi berkala pesan & status tiket aktif tiap 5 detik
+  useEffect(() => {
+    const pollTimer = setInterval(() => {
+      if (selectedTicketId) {
+        ticketApi.getTicketDetail(selectedTicketId).then((detail) => {
+          setSelectedTicketDetail((prev) => {
+            if (!prev || prev.ticket.id !== selectedTicketId) return detail;
+            if (
+              detail.messages.length !== prev.messages.length ||
+              detail.ticket.status !== prev.ticket.status ||
+              detail.ticket.updatedAt !== prev.ticket.updatedAt
+            ) {
+              return detail;
+            }
+            return prev;
+          });
+        }).catch(() => {});
+      }
+    }, 5000);
+
+    return () => clearInterval(pollTimer);
+  }, [selectedTicketId]);
+
   // ------------------------------------------------------------
-  // Realtime Events Handler
+  // Realtime Events Handler (WebSocket & SSE Stream)
   // ------------------------------------------------------------
   const handleRealtimeEvent = useCallback(
     (event: RealtimeTicketEvent) => {
-      console.log('[CS Realtime Event]:', event);
+      console.log('[CS Realtime Event Received]:', event);
 
       const rawData = event.data || {};
-      const ticketObj =
-        event.ticket ||
-        (rawData.ticket_number || rawData.ticketNumber ? normalizeTicket(rawData) : undefined);
-      const messageObj =
-        event.message ||
-        (rawData.message !== undefined || rawData.content !== undefined
-          ? normalizeMessage(rawData)
-          : undefined);
-      const ticketId = event.ticketId || rawData.ticketId || rawData.ticket_id || ticketObj?.id;
-      const adminId = event.adminId || rawData.adminId || rawData.assigned_to;
-      const adminName = event.adminName || rawData.adminName || rawData.admin_name;
-      const status = event.status || rawData.status;
+      const rawTicket = rawData.ticket || (rawData.ticket_number ? rawData : undefined);
+      const ticketObj = event.ticket || (rawTicket ? normalizeTicket(rawTicket) : undefined);
+
+      let messageRaw = event.message;
+      if (!messageRaw && rawData) {
+        if (rawData.message && typeof rawData.message === 'object') {
+          messageRaw = {
+            ...rawData.message,
+            ticketId: rawData.ticketId || rawData.ticket_id || rawData.message.ticket_id || rawData.message.ticketId,
+          };
+        } else if (rawData.message !== undefined || rawData.content !== undefined) {
+          messageRaw = rawData;
+        }
+      }
+      const messageObj = messageRaw ? normalizeMessage(messageRaw) : undefined;
+      const ticketId = String(event.ticketId || rawData.ticketId || rawData.ticket_id || ticketObj?.id || messageObj?.ticketId || '');
+      const adminId = event.adminId || rawData.adminId || rawData.assigned_to || rawData.admin?.id;
+      const adminName = event.adminName || rawData.adminName || rawData.admin_name || rawData.admin?.name;
+      const status = (event.status || rawData.status || rawData.newStatus || ticketObj?.status) as TicketStatus | undefined;
 
       // Event: New Ticket Created
       if (event.event === 'ticket.created') {
@@ -215,76 +255,92 @@ export default function CustomerServiceInboxPage() {
             msg: `Tiket baru #${targetTicket.ticketNumber} masuk dari ${targetTicket.customerName}!`,
             type: 'warning',
           });
-        } else {
-          fetchTickets();
         }
+        fetchTickets();
       }
 
       // Event: Ticket Assigned
-      else if (event.event === 'ticket.assigned' && ticketId) {
-        setTickets((prev) =>
-          prev.map((t) =>
-            t.id === ticketId
-              ? {
-                  ...t,
-                  status: 'ASSIGNED',
-                  adminId: adminId || t.adminId,
-                  adminName: adminName || t.adminName,
-                }
-              : t
-          )
-        );
-        if (selectedTicketId === ticketId) {
-          loadTicketDetail(ticketId);
-        }
-      }
-
-      // Event: New Message Incoming
-      else if (event.event === 'ticket.message' && (messageObj || ticketId)) {
-        const msg = messageObj;
-
-        // If currently open ticket
-        if (msg && selectedTicketId === msg.ticketId) {
-          setSelectedTicketDetail((prev) => {
-            if (!prev) return null;
-            // Check deduplication
-            if (prev.messages.some((m) => m.id === msg.id)) return prev;
-            return {
-              ...prev,
-              messages: [...prev.messages, msg],
-            };
-          });
-          ticketApi.markAsRead(msg.ticketId).catch(() => {});
-        } else if (msg) {
-          // Increment unread count in ticket card
+      else if (event.event === 'ticket.assigned') {
+        if (ticketObj) {
+          setTickets((prev) =>
+            prev.map((t) => (t.id === ticketObj.id ? ticketObj : t))
+          );
+          if (selectedTicketId === ticketObj.id) {
+            setSelectedTicketDetail((prev) => (prev ? { ...prev, ticket: ticketObj } : null));
+          }
+        } else if (ticketId) {
           setTickets((prev) =>
             prev.map((t) =>
-              t.id === msg.ticketId
+              t.id === ticketId
                 ? {
                     ...t,
-                    unreadCount: (t.unreadCount || 0) + 1,
-                    lastMessage: msg.message,
-                    lastMessageAt: msg.createdAt,
+                    status: 'ASSIGNED',
+                    adminId: adminId || t.adminId,
+                    adminName: adminName || t.adminName,
                   }
                 : t
             )
           );
-        } else {
+          if (selectedTicketId === ticketId) {
+            loadTicketDetail(ticketId);
+          }
+        }
+      }
+
+      // Event: New Message Incoming (Live Chat update)
+      else if (event.event === 'ticket.message') {
+        const msg = messageObj;
+        const targetTid = ticketId || (msg ? msg.ticketId : '');
+
+        if (msg) {
+          // If currently open ticket, append to message list immediately
+          if (selectedTicketId === targetTid) {
+            setSelectedTicketDetail((prev) => {
+              if (!prev) return null;
+              if (prev.messages.some((m) => m.id === msg.id)) return prev;
+              return {
+                ...prev,
+                messages: [...prev.messages, msg],
+              };
+            });
+            ticketApi.markAsRead(targetTid).catch(() => {});
+          }
+
+          // Update ticket card preview and counter
+          setTickets((prev) =>
+            prev.map((t) =>
+              t.id === targetTid
+                ? {
+                    ...t,
+                    lastMessage: msg.message,
+                    lastMessageAt: msg.createdAt,
+                    unreadCount: selectedTicketId === targetTid ? 0 : (t.unreadCount || 0) + 1,
+                  }
+                : t
+            )
+          );
+        } else if (targetTid) {
+          if (selectedTicketId === targetTid) {
+            loadTicketDetail(targetTid);
+          }
           fetchTickets();
         }
       }
 
       // Event: Status Changed
-      else if (event.event === 'ticket.status_changed' && ticketId) {
-        setTickets((prev) =>
-          prev.map((t) =>
-            t.id === ticketId
-              ? { ...t, status: (status || t.status) as TicketStatus }
-              : t
-          )
-        );
-        if (selectedTicketId === ticketId) {
-          loadTicketDetail(ticketId);
+      else if (event.event === 'ticket.status_changed') {
+        if (ticketObj) {
+          setTickets((prev) => prev.map((t) => (t.id === ticketObj.id ? ticketObj : t)));
+          if (selectedTicketId === ticketObj.id) {
+            setSelectedTicketDetail((prev) => (prev ? { ...prev, ticket: ticketObj } : null));
+          }
+        } else if (ticketId && status) {
+          setTickets((prev) =>
+            prev.map((t) => (t.id === ticketId ? { ...t, status } : t))
+          );
+          if (selectedTicketId === ticketId) {
+            loadTicketDetail(ticketId);
+          }
         }
       }
 
@@ -294,16 +350,23 @@ export default function CustomerServiceInboxPage() {
         event.event === 'ticket.released' ||
         event.event === 'ticket.transferred'
       ) {
-        fetchTickets();
-        if (selectedTicketId === ticketId) {
-          loadTicketDetail(ticketId);
+        if (ticketObj) {
+          setTickets((prev) => prev.map((t) => (t.id === ticketObj.id ? ticketObj : t)));
+          if (selectedTicketId === ticketObj.id) {
+            setSelectedTicketDetail((prev) => (prev ? { ...prev, ticket: ticketObj } : null));
+          }
+        } else {
+          fetchTickets();
+          if (selectedTicketId === ticketId) {
+            loadTicketDetail(ticketId);
+          }
         }
       }
     },
     [selectedTicketId, loadTicketDetail, fetchTickets]
   );
 
-  // Realtime hook
+  // Realtime hook (WebSocket with automatic SSE fallback)
   const { status: realtimeStatus, soundEnabled, toggleSound } = useCsRealtime({
     onEvent: handleRealtimeEvent,
     enabled: true,
@@ -529,7 +592,7 @@ export default function CustomerServiceInboxPage() {
   };
 
   const activeTicket = selectedTicketDetail?.ticket || tickets.find((t) => t.id === selectedTicketId) || null;
-  const isOffline = backendState.hasCheckedInitial && !backendState.isConnected && tickets.length === 0 && !isLoadingTickets;
+  const isOffline = !isCsOnline && backendState.hasCheckedInitial && !backendState.isConnected && tickets.length === 0 && !isLoadingTickets;
 
   if (isOffline) {
     return (
@@ -547,11 +610,15 @@ export default function CustomerServiceInboxPage() {
             onRetry={async () => {
               setIsRetrying(true);
               try {
-                const [live] = await Promise.all([
+                const [live, ticketsRes, adminsRes] = await Promise.all([
                   syncWithBackend(),
-                  fetchTickets(),
+                  ticketApi.getTickets().catch(() => ({ data: [] })),
+                  ticketApi.getAdmins().catch(() => []),
                 ]);
-                if (live || tickets.length > 0) {
+                if (live || (ticketsRes.data && ticketsRes.data.length > 0) || adminsRes.length > 0) {
+                  setIsCsOnline(true);
+                  if (ticketsRes.data) setTickets(ticketsRes.data);
+                  if (adminsRes.length > 0) setAdmins(adminsRes);
                   setToast({ msg: 'Server backend CS berhasil terhubung!', type: 'success' });
                 } else {
                   setToast({ msg: 'Server backend CS masih offline.', type: 'error' });

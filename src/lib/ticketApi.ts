@@ -12,7 +12,7 @@ import {
   TicketQueryParams,
 } from './ticketTypes';
 
-const RAW_API_URL = (
+export const RAW_API_URL = (
   process.env.NEXT_PUBLIC_API_URL ||
   process.env.NEXT_PUBLIC_BACKEND_URL ||
   process.env.BACKEND_URL ||
@@ -68,8 +68,10 @@ async function apiRequest<T>(
     fullUrl = `${RAW_API_URL}${cleanPath}`;
   }
 
+  console.log(`[TicketApi] Requesting: ${options.method || 'GET'} ${fullUrl}`);
+
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 6000);
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
 
   try {
     const res = await fetch(fullUrl, {
@@ -82,9 +84,9 @@ async function apiRequest<T>(
 
     if (res.status === 409) {
       const errJson = await res.json().catch(() => ({}));
-      throw new TicketConflictError(
-        errJson.error || errJson.message || 'Maaf, tiket ini baru saja diambil oleh petugas admin lain.'
-      );
+      const errDetail = errJson.error || errJson.message || 'Maaf, tiket ini baru saja diambil oleh petugas admin lain.';
+      console.warn(`[TicketApi] 409 Conflict pada ${fullUrl}:`, errDetail);
+      throw new TicketConflictError(errDetail);
     }
 
     if (res.ok) {
@@ -94,13 +96,14 @@ async function apiRequest<T>(
 
     const errJson = await res.json().catch(() => ({}));
     const errMsg = errJson.error || errJson.message || `HTTP ${res.status}`;
-    console.warn(`[TicketApi] HTTP ${res.status} pada ${fullUrl}:`, errMsg);
+    console.error(`[TicketApi] HTTP ${res.status} pada ${fullUrl}:`, errMsg, errJson);
     return { success: false, error: errMsg };
-  } catch (err) {
+  } catch (err: any) {
     clearTimeout(timeoutId);
     if (err instanceof TicketConflictError) {
       throw err;
     }
+    console.error(`[TicketApi] Network/fetch fail pada ${fullUrl}:`, err?.message || err);
     // Network fail or server down -> mark as offline
     return { success: false, error: 'OFFLINE_FALLBACK' };
   }
@@ -689,16 +692,20 @@ export const ticketApi = {
   },
 
   async updateSettings(settings: Partial<CsSettings>): Promise<CsSettings> {
+    const payload: Record<string, any> = { ...settings };
+    if (settings.autoCloseMinutes !== undefined) {
+      payload.auto_close_inactive_minutes = String(settings.autoCloseMinutes);
+    }
     const res = await apiRequest<any>('/api/cs/settings', {
       method: 'PUT',
-      body: JSON.stringify(settings),
+      body: JSON.stringify({ settings: payload, ...payload }),
     });
     if (res.success && res.data) {
       const d = res.data;
       return {
         autoCloseMinutes: Number(d.auto_close_inactive_minutes || d.autoCloseMinutes || 15),
-        soundEnabled: d.soundEnabled ?? true,
-        desktopNotification: d.desktopNotification ?? true,
+        soundEnabled: d.soundEnabled !== undefined ? String(d.soundEnabled) === 'true' : true,
+        desktopNotification: d.desktopNotification !== undefined ? String(d.desktopNotification) === 'true' : true,
         greetingTemplate: d.greetingTemplate || 'Halo, saya {adminName} dari Pelayanan Statistik Terpadu (PST) BPS Kabupaten Bangka. Ada yang dapat kami bantu?',
         awayMessage: d.awayMessage || undefined,
       };

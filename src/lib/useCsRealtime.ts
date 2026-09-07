@@ -4,6 +4,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { RealtimeTicketEvent } from './ticketTypes';
+import { RAW_API_URL } from './ticketApi';
 
 export type RealtimeStatus = 'CONNECTING' | 'CONNECTED' | 'RECONNECTING' | 'FALLBACK_SSE' | 'OFFLINE';
 
@@ -96,14 +97,8 @@ export function playNewMessageSound() {
 // URL Resolver for WebSocket & SSE
 // ============================================================
 function getWebSocketUrl(): string {
-  const rawApi = (
-    process.env.NEXT_PUBLIC_API_URL ||
-    process.env.NEXT_PUBLIC_BACKEND_URL ||
-    'http://localhost:8000'
-  ).replace(/\/$/, '');
-
   try {
-    const url = new URL(rawApi);
+    const url = new URL(RAW_API_URL);
     const wsProto = url.protocol === 'https:' ? 'wss:' : 'ws:';
     return `${wsProto}//${url.host}/ws/cs`;
   } catch {
@@ -112,12 +107,8 @@ function getWebSocketUrl(): string {
 }
 
 function getSseUrl(): string {
-  const rawApi = (
-    process.env.NEXT_PUBLIC_API_URL ||
-    process.env.NEXT_PUBLIC_BACKEND_URL ||
-    'http://localhost:8000'
-  ).replace(/\/$/, '');
-  return `${rawApi}/api/cs/events`;
+  const sep = RAW_API_URL.includes('?') ? '&' : '?';
+  return `${RAW_API_URL}/api/cs/events${sep}ngrok-skip-browser-warning=true`;
 }
 
 // ============================================================
@@ -187,12 +178,16 @@ export function useCsRealtime(options: UseCsRealtimeOptions = {}) {
 
     const sseUrl = getSseUrl();
     try {
+      console.log('[Realtime SSE] Connecting to:', sseUrl);
       const source = new EventSource(sseUrl);
       sseRef.current = source;
       setStatus('FALLBACK_SSE');
 
       source.onopen = () => {
-        if (isComponentMounted.current) setStatus('FALLBACK_SSE');
+        if (isComponentMounted.current) {
+          console.log('[Realtime SSE] Connected to SSE stream.');
+          setStatus('FALLBACK_SSE');
+        }
       };
 
       source.onmessage = (e) => {
@@ -204,17 +199,19 @@ export function useCsRealtime(options: UseCsRealtimeOptions = {}) {
         }
       };
 
-      source.onerror = () => {
+      source.onerror = (err) => {
+        console.warn('[Realtime SSE] Connection interrupted:', err);
         source.close();
         if (isComponentMounted.current) {
           setStatus('OFFLINE');
-          // Try reconnecting to WebSocket after 10s
+          // Try reconnecting after 5s
           reconnectTimeoutRef.current = setTimeout(() => {
             connectWebSocket();
-          }, 10000);
+          }, 5000);
         }
       };
-    } catch {
+    } catch (err) {
+      console.error('[Realtime SSE] Init error:', err);
       setStatus('OFFLINE');
     }
   }, [handleIncomingPayload]);
@@ -232,11 +229,13 @@ export function useCsRealtime(options: UseCsRealtimeOptions = {}) {
     setStatus('CONNECTING');
 
     try {
+      console.log('[Realtime WS] Attempting connection to:', wsUrl);
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {
         if (!isComponentMounted.current) return;
+        console.log('[Realtime WS] Connected successfully.');
         setStatus('CONNECTED');
         reconnectAttemptsRef.current = 0;
         // Send initial auth / handshake if needed
@@ -253,28 +252,26 @@ export function useCsRealtime(options: UseCsRealtimeOptions = {}) {
         }
       };
 
-      ws.onclose = () => {
+      ws.onclose = (event) => {
         if (!isComponentMounted.current) return;
+        console.warn(`[Realtime WS] Closed (code: ${event.code}).`);
 
-        // Try reconnecting with exponential backoff
         const attempts = reconnectAttemptsRef.current + 1;
         reconnectAttemptsRef.current = attempts;
 
-        if (attempts <= 4) {
+        if (attempts <= 1) {
           setStatus('RECONNECTING');
-          const delay = Math.min(1000 * Math.pow(2, attempts - 1), 10000);
           reconnectTimeoutRef.current = setTimeout(() => {
             connectWebSocket();
-          }, delay);
+          }, 1500);
         } else {
-          // If WS failed 4 times, switch to SSE fallback
-          console.info('[Realtime] WebSocket unavailable, switching to SSE fallback...');
+          console.info('[Realtime] Switching to SSE stream fallback...');
           startSseFallback();
         }
       };
 
-      ws.onerror = () => {
-        // ws.onclose will fire after onerror
+      ws.onerror = (err) => {
+        console.warn('[Realtime WS] Error occurred:', err);
       };
     } catch {
       startSseFallback();
