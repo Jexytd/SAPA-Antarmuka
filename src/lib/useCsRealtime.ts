@@ -115,8 +115,6 @@ function getSseUrl(): string {
 
 // ============================================================
 // Persistent Singleton Connection Manager
-// Menjamin koneksi WebSocket persisten di client, kebal terhadap
-// StrictMode unmount-remount, dan tidak melakukan disconnect prematur.
 // ============================================================
 class CsRealtimeManager {
   private ws: WebSocket | null = null;
@@ -145,7 +143,7 @@ class CsRealtimeManager {
     onEvent?: (event: RealtimeTicketEvent) => void,
     onStatus?: (status: RealtimeStatus) => void
   ): () => void {
-    // Batalkan rencana disconnect jika komponen remount (misal React StrictMode)
+    // Batalkan rencana disconnect jika ada re-render / tab switch cepat
     if (this.disconnectDebounceTimer) {
       clearTimeout(this.disconnectDebounceTimer);
       this.disconnectDebounceTimer = null;
@@ -163,24 +161,23 @@ class CsRealtimeManager {
       if (onEvent) this.eventSubscribers.delete(onEvent);
       if (onStatus) this.statusSubscribers.delete(onStatus);
 
-      // Jika tidak ada listener yang tersisa, jadwalkan disconnect dengan jeda 2 detik
-      // agar navigasi halaman atau StrictMode re-render tidak memutuskan koneksi seketika.
+      // Debounce 5 detik sebelum benar-benar menutup koneksi socket
       if (this.eventSubscribers.size === 0 && this.statusSubscribers.size === 0) {
         if (this.disconnectDebounceTimer) clearTimeout(this.disconnectDebounceTimer);
         this.disconnectDebounceTimer = setTimeout(() => {
           if (this.eventSubscribers.size === 0 && this.statusSubscribers.size === 0) {
             this.disconnect();
           }
-        }, 2000);
+        }, 5000);
       }
     };
   }
 
-  public connect(force = false) {
+  public connect() {
     if (typeof window === 'undefined') return;
 
-    // Jika socket sudah aktif terhubung atau sedang proses handshake, jangan diinterupsi!
-    if (!force && this.ws) {
+    // JIKA SUDAH CONNECTED ATAU SEDANG CONNECTING, JANGAN DISENTUH ATAU DITUTUP!
+    if (this.ws) {
       if (this.ws.readyState === WebSocket.OPEN) {
         this.setStatus('CONNECTED');
         return;
@@ -191,8 +188,8 @@ class CsRealtimeManager {
       }
     }
 
-    // Bersihkan instance lama dengan aman tanpa memicu event close liar
-    this.cleanupSocket();
+    // Bersihkan socket lama yang sudah close/closing
+    this.cleanupSocket('New connection request');
 
     const wsUrl = getWebSocketUrl();
     this.setStatus('CONNECTING');
@@ -207,6 +204,11 @@ class CsRealtimeManager {
         console.log('[Realtime WS] Terhubung sukses (OPEN).');
         this.setStatus('CONNECTED');
         this.reconnectAttempts = 0;
+
+        if (this.reconnectTimer) {
+          clearTimeout(this.reconnectTimer);
+          this.reconnectTimer = null;
+        }
 
         // Matikan SSE fallback jika sebelumnya aktif
         this.closeSSE();
@@ -225,48 +227,48 @@ class CsRealtimeManager {
         try {
           const data = JSON.parse(event.data);
           if (data.type === 'pong' || data.event === 'pong' || data.event === 'connected' || data.event === 'subscribed') {
-            return; // System messages
+            return;
           }
           this.broadcastEvent(data as RealtimeTicketEvent);
         } catch {}
       };
 
       ws.onclose = (event) => {
-        // Abaikan jika event close berasal dari socket lama yang sudah diganti
         if (this.ws !== ws) return;
-
+        this.ws = null;
         this.stopHeartbeat();
+
         console.warn(`[Realtime WS] Terputus. Kode: ${event.code}, Alasan: ${event.reason || 'none'}`);
 
-        // Jika tidak ada komponen yang subscribe, jangan reconnect
+        // Jika tidak ada komponen aktif yang butuh realtime, jangan reconnect
         if (this.eventSubscribers.size === 0 && this.statusSubscribers.size === 0) {
           return;
         }
 
-        // Jika ditutup normal oleh client (1000), jangan auto-reconnect
-        if (event.code === 1000 && event.reason === 'Intentional disconnect') {
+        // JIKA PENUTUPAN NORMAL (KODE 1000), JANGAN PERNAH RECONNECT OTOMATIS!
+        if (event.code === 1000) {
           return;
         }
 
         this.reconnectAttempts++;
-        const backoff = Math.min(1500 * Math.pow(1.5, this.reconnectAttempts - 1), 15000);
+        const backoff = Math.min(2000 * Math.pow(1.5, this.reconnectAttempts - 1), 15000);
         this.setStatus('RECONNECTING');
 
         if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
         this.reconnectTimer = setTimeout(() => {
-          this.connect(true);
+          this.connect();
         }, backoff);
 
-        // Jika WS gagal beberapa kali, aktifkan SSE paralel sebagai cadangan
+        // Jika WS terputus abnormal berulang kali, aktifkan SSE sebagai cadangan
         if (this.reconnectAttempts >= 3 && !this.sse) {
-          console.info('[Realtime] Mengaktifkan SSE Stream sebagai cadangan sekunder...');
+          console.info('[Realtime] Mengaktifkan SSE Stream sebagai cadangan...');
           this.startSSE();
         }
       };
 
       ws.onerror = (err) => {
         if (this.ws !== ws) return;
-        console.warn('[Realtime WS] Terjadi galat koneksi:', err);
+        console.warn('[Realtime WS] Galat koneksi:', err);
       };
     } catch (err) {
       console.error('[Realtime WS] Gagal inisialisasi socket:', err);
@@ -292,35 +294,30 @@ class CsRealtimeManager {
     }
   }
 
-  private cleanupSocket() {
+  private cleanupSocket(reason = 'Normal closure') {
     this.stopHeartbeat();
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     if (this.ws) {
       const oldWs = this.ws;
       this.ws = null;
-      // Lepas event listener agar penutupan tidak memicu callback close berantai
       oldWs.onopen = null;
       oldWs.onmessage = null;
       oldWs.onerror = null;
-      oldWs.onclose = null;
+      oldWs.onclose = null; // Lepas listener agar tidak ada onclose re-entrant
       try {
-        if (oldWs.readyState === WebSocket.OPEN) {
-          oldWs.close(1000, 'Replaced');
-        } else if (oldWs.readyState === WebSocket.CONNECTING) {
-          oldWs.onopen = () => {
-            try { oldWs.close(1000, 'Replaced while connecting'); } catch {}
-          };
+        if (oldWs.readyState === WebSocket.OPEN || oldWs.readyState === WebSocket.CONNECTING) {
+          oldWs.close(1000, reason);
         }
       } catch {}
     }
   }
 
   public disconnect() {
-    this.cleanupSocket();
+    this.cleanupSocket('Intentional disconnect');
     this.closeSSE();
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
     this.setStatus('OFFLINE');
   }
 
@@ -442,6 +439,6 @@ export function useCsRealtime(options: UseCsRealtimeOptions = {}) {
     soundEnabled,
     toggleSound,
     lastEventTime,
-    reconnect: () => realtimeManager.connect(true),
+    reconnect: () => realtimeManager.connect(),
   };
 }
