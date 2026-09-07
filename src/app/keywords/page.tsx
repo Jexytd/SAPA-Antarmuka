@@ -53,6 +53,107 @@ import {
   HelpCircle,
 } from 'lucide-react';
 
+interface ParsedMenuItem {
+  num: number;
+  label: string;
+  raw: string;
+  extraDesc?: string;
+}
+
+const parseMenuLines = (menuText: string): ParsedMenuItem[] => {
+  if (!menuText) return [];
+  const lines = menuText.split('\n');
+  const items: ParsedMenuItem[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const match = trimmed.match(/^(\d+)[\.\)]\s*(.+)$/);
+    if (match) {
+      const num = parseInt(match[1], 10);
+      let content = match[2].trim();
+      let extraDesc: string | undefined;
+
+      if (content.includes(' - ')) {
+        const parts = content.split(' - ');
+        content = parts[0].trim();
+        extraDesc = parts.slice(1).join(' - ').trim();
+      }
+
+      const cleanLabel = content.replace(/[*_~`]/g, '').trim();
+      if (cleanLabel) {
+        items.push({
+          num,
+          label: cleanLabel,
+          raw: trimmed,
+          extraDesc,
+        });
+      }
+    }
+  }
+
+  return items;
+};
+
+const findTemplateForLabel = (label: string, tpls: ChatbotTemplate[]): ChatbotTemplate | undefined => {
+  const norm = label.trim().toLowerCase();
+  if (!norm) return undefined;
+
+  const candidateTpls = tpls.filter(
+    (t) => t.id !== 'tpl-system-menu' && t.keyword.trim().toLowerCase() !== 'menu utama'
+  );
+
+  // 1. Exact match with keyword
+  const exact = candidateTpls.find((t) => t.keyword.trim().toLowerCase() === norm);
+  if (exact) return exact;
+
+  // 2. Acronym in parentheses: e.g. "Portal Visualisasi Data (GARDA)" -> "GARDA"
+  const acronymMatch = label.match(/\(([^)]+)\)/);
+  if (acronymMatch && acronymMatch[1]) {
+    const acronym = acronymMatch[1].trim().toLowerCase();
+    if (acronym.length >= 2) {
+      const byAcronym = candidateTpls.find((t) => {
+        const kw = t.keyword.trim().toLowerCase();
+        return kw === acronym || kw.includes(acronym) || acronym.includes(kw);
+      });
+      if (byAcronym) return byAcronym;
+    }
+  }
+
+  // 3. Substring match
+  const sub = candidateTpls.find((t) => {
+    const kw = t.keyword.trim().toLowerCase();
+    return kw.includes(norm) || norm.includes(kw);
+  });
+  if (sub) return sub;
+
+  // 4. Token overlap
+  const stopWords = new Set(['bps', 'kabupaten', 'kab', 'bangka', 'data', 'portal', 'dan', 'di', 'ke', 'dari', 'yang', 'layanan']);
+  const labelTokens = norm.split(/[\s,()\/_-]+/).filter((w) => w.length >= 3 && !stopWords.has(w));
+
+  if (labelTokens.length > 0) {
+    let bestTpl: ChatbotTemplate | undefined;
+    let bestScore = 0;
+
+    for (const tpl of candidateTpls) {
+      const kwTokens = tpl.keyword.toLowerCase().split(/[\s,()\/_-]+/).filter((w) => w.length >= 3 && !stopWords.has(w));
+      let score = 0;
+      for (const token of labelTokens) {
+        if (kwTokens.includes(token)) score++;
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        bestTpl = tpl;
+      }
+    }
+
+    if (bestScore >= 1 && bestTpl) {
+      return bestTpl;
+    }
+  }
+
+  return undefined;
+};
+
 export default function KeywordsPage() {
   const { isAuthenticated, isLoading } = useAuth();
   const router = useRouter();
@@ -362,8 +463,76 @@ export default function KeywordsPage() {
           reply = dynamicMenuStr;
         } else if (/^\d+$/.test(clean)) {
           const num = parseInt(clean, 10);
+          const parsedLines = parseMenuLines(dynamicMenuStr);
+          const parsedLine = parsedLines.find((p) => p.num === num);
           const item = dynamicItems.find((d) => d.num === num);
-          if (item) {
+
+          // A. Jika nomor ada di template Menu Utama (baik default maupun kustom seperti GARDA)
+          if (parsedLine) {
+            const lineLabel = parsedLine.label;
+            const lineLower = lineLabel.toLowerCase();
+
+            // 1. Cek Layanan PST
+            if (lineLower.includes('layanan bps') || lineLower.includes('apa saja layanan')) {
+              reply = dynamicItems.find((d) => d.type === 'service' && d.category === 'Layanan')?.response || '';
+            } else if (
+              lineLower.includes('hubungi') ||
+              lineLower.includes('petugas') ||
+              lineLower.includes('kontak') ||
+              lineLower.includes('pst')
+            ) {
+              reply = dynamicItems.find((d) => d.type === 'service' && d.category === 'Kontak')?.response || '';
+            }
+
+            // 2. Cek kecocokan template kustom / manual (misal GARDA, portal visualisasi, dsb.)
+            if (!reply) {
+              const matchedTpl = findTemplateForLabel(lineLabel, templates);
+              if (matchedTpl) {
+                reply = matchedTpl.response;
+              }
+            }
+
+            // 3. Cek apakah cocok dengan kategori dataset resmi BPS
+            if (!reply) {
+              const matchedDatasets = allPublishedDs.filter((d) => {
+                const dCat = (d.category || d.name || '').trim().toLowerCase();
+                return dCat === lineLower || lineLower.includes(dCat) || dCat.includes(lineLower);
+              });
+
+              if (matchedDatasets.length > 1) {
+                const subDs = matchedDatasets.map((d) => {
+                  const tpl = datasetTemplates.find((t) => t.dataset_id === d.id);
+                  return {
+                    id: d.id,
+                    name: d.name,
+                    code: d.code,
+                    response: tpl?.response,
+                  };
+                });
+                setSimSubmenu({ category: lineLabel, datasets: subDs });
+                const lines = subDs.map((d, i) => `${i + 1}. *${d.name}* (${d.code})`);
+                reply =
+                  `📊 *PILIHAN DATASET: ${lineLabel.toUpperCase()}*\n` +
+                  `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                  `Terdapat *${subDs.length} dataset statistik resmi* dalam kategori ini. Silakan balas dengan nomor dataset yang ingin Anda lihat lebih rinci:\n\n` +
+                  lines.join('\n') +
+                  `\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                  `💡 _Balas dengan angka *1* - *${subDs.length}*, atau ketik *menu* untuk kembali ke Menu Utama._`;
+              } else if (matchedDatasets.length === 1) {
+                const singleDs = matchedDatasets[0];
+                const tpl = singleDs ? datasetTemplates.find((t) => t.dataset_id === singleDs.id) : null;
+                reply = tpl?.response || '';
+              }
+            }
+
+            // 4. Cek apakah baris menu menyertakan deskripsi ekstra langsung
+            if (!reply && parsedLine.extraDesc) {
+              reply = `📌 *${parsedLine.label}*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n${parsedLine.extraDesc}`;
+            }
+          }
+
+          // B. Fallback ke item dinamis jika belum ditemukan
+          if (!reply && item) {
             if (item.type === 'service') {
               reply = item.response || '';
             } else {
@@ -399,7 +568,9 @@ export default function KeywordsPage() {
                 reply = tpl?.response || item.response || '';
               }
             }
-          } else {
+          }
+
+          if (!reply) {
             reply = `Maaf, pilihan nomor *${num}* belum tersedia.\n\n${dynamicMenuStr}`;
           }
         } else if (clean === 'menu' || clean === 'sapa' || clean === 'halo' || clean === 'p') {
