@@ -318,6 +318,10 @@ export const BackendApi = {
     }>(`${BASE_URL}/api/sync/store`);
   },
 
+  async getStore() {
+    return this.getStoreSnapshot();
+  },
+
   async syncStore(snapshot: {
     datasets?: Dataset[];
     records?: DataRecord[];

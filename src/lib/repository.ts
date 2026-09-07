@@ -45,23 +45,62 @@ interface AppStore {
   categories: Category[];
 }
 
+function isDemoItem(item: any): boolean {
+  if (!item) return false;
+  const id = String(item.id || '');
+  if (
+    id.startsWith('rec-pop-') ||
+    id.startsWith('rec-pov-') ||
+    id.startsWith('rec-growth-') ||
+    id.startsWith('rec-hdi-') ||
+    id.startsWith('rec-labor-') ||
+    id.startsWith('rec-grdp-') ||
+    id.startsWith('rec-gdi-') ||
+    id.startsWith('rec-edu-') ||
+    id === 'ds-7' ||
+    id === 'ds-8'
+  ) {
+    return true;
+  }
+  if (typeof item.notes === 'string' && (item.notes.includes('DEMO') || item.notes.includes('SAMPLE'))) {
+    return true;
+  }
+  if (typeof item.description === 'string' && item.description.includes('DEMO / SAMPLE DATA')) {
+    return true;
+  }
+  if (typeof item.indicator === 'string' && (item.indicator.includes('Test') || item.indicator.includes('Uji Coba'))) {
+    return true;
+  }
+  return false;
+}
+
 function getInitialStore(): AppStore {
   if (typeof window !== 'undefined') {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') {
+          return {
+            datasets: Array.isArray(parsed.datasets) ? parsed.datasets.filter((d: any) => !isDemoItem(d)) : [],
+            records: Array.isArray(parsed.records) ? parsed.records.filter((r: any) => !isDemoItem(r)) : [],
+            users: Array.isArray(parsed.users) ? parsed.users : [...MOCK_USERS],
+            reviews: Array.isArray(parsed.reviews) ? parsed.reviews : [],
+            auditLogs: Array.isArray(parsed.auditLogs) ? parsed.auditLogs.filter((a: any) => !isDemoItem(a)) : [],
+            categories: Array.isArray(parsed.categories) ? parsed.categories : [...CATEGORIES],
+          };
+        }
       }
     } catch {
       // ignore parse errors
     }
   }
   return {
-    datasets: [...MOCK_DATASETS],
-    records: [...MOCK_RECORDS],
+    datasets: [...MOCK_DATASETS].filter((d) => !isDemoItem(d)),
+    records: [...MOCK_RECORDS].filter((r) => !isDemoItem(r)),
     users: [...MOCK_USERS],
     reviews: [...MOCK_REVIEWS],
-    auditLogs: [...MOCK_AUDIT_LOGS],
+    auditLogs: [...MOCK_AUDIT_LOGS].filter((a) => !isDemoItem(a)),
     categories: [...CATEGORIES],
   };
 }
@@ -156,36 +195,39 @@ export async function syncWithBackend(): Promise<boolean> {
   try {
     const currentStore = getStore();
 
-    // 1. Prioritaskan Full Snapshot Sync dua arah:
-    // Kirim data lokal saat ini (termasuk input terbaru dan id yang dihapus) ke backend, dan terima database gabungan yang utuh.
-    const syncRes = await BackendApi.syncStore({
-      datasets: currentStore.datasets,
-      records: currentStore.records,
-      categories: currentStore.categories,
-      users: currentStore.users,
-      reviews: currentStore.reviews,
-      auditLogs: currentStore.auditLogs,
-      deleted_dataset_ids: Array.from(pendingDeletedDatasets),
-      deleted_record_ids: Array.from(pendingDeletedRecords),
-    });
-
-    if (syncRes && Array.isArray(syncRes.datasets)) {
+    // 1. Jika ada penghapusan tertunda yang dilakukan secara lokal, kirim ke backend
+    if (pendingDeletedDatasets.size > 0 || pendingDeletedRecords.size > 0) {
+      await BackendApi.syncStore({
+        deleted_dataset_ids: Array.from(pendingDeletedDatasets),
+        deleted_record_ids: Array.from(pendingDeletedRecords),
+      });
       pendingDeletedDatasets.clear();
       pendingDeletedRecords.clear();
+    }
 
-      currentStore.datasets = syncRes.datasets;
-      if (Array.isArray(syncRes.records)) currentStore.records = syncRes.records;
+    // 2. Selalu prioritaskan snapshot kanonikal resmi dari server (GET /api/sync/store).
+    // Server db.json adalah Single Source of Truth, sehingga data yang telah dihapus di backend TIDAK akan bangkit kembali dari frontend.
+    const syncRes = await BackendApi.getStore();
+
+    if (syncRes && Array.isArray(syncRes.datasets)) {
+      currentStore.datasets = syncRes.datasets.filter((d: Dataset) => !isDemoItem(d));
+      if (Array.isArray(syncRes.records)) {
+        currentStore.records = syncRes.records.filter((r: DataRecord) => !isDemoItem(r));
+      }
       if (Array.isArray(syncRes.categories)) currentStore.categories = syncRes.categories;
       if (Array.isArray(syncRes.users)) currentStore.users = syncRes.users;
       if (Array.isArray(syncRes.reviews)) currentStore.reviews = syncRes.reviews;
-      if (Array.isArray(syncRes.auditLogs)) currentStore.auditLogs = syncRes.auditLogs;
+      if (Array.isArray(syncRes.auditLogs)) {
+        currentStore.auditLogs = syncRes.auditLogs.filter((a: AuditLog) => !isDemoItem(a));
+      }
 
+      saveStore();
       notify();
       updateBackendStatus({ isConnected: true, isSyncing: false, lastSyncedAt: new Date(), hasCheckedInitial: true });
       return true;
     }
 
-    // 2. Fallback REST API individual jika endpoint sync khusus belum merespons
+    // 3. Fallback REST API individual jika endpoint sync/store tidak merespons
     const [datasets, records, reviews, auditLogs, users, categories] = await Promise.all([
       BackendApi.getDatasets(),
       BackendApi.getRecords(),
@@ -198,13 +240,13 @@ export async function syncWithBackend(): Promise<boolean> {
     let hasChanges = false;
 
     if (datasets && datasets.length > 0) {
-      const validDatasets = datasets.filter((d) => !pendingDeletedDatasets.has(d.id));
+      const validDatasets = datasets.filter((d) => !pendingDeletedDatasets.has(d.id) && !isDemoItem(d));
       currentStore.datasets = validDatasets;
       hasChanges = true;
     }
     if (records && records.length > 0) {
       const validRecords = records.filter(
-        (r) => !pendingDeletedRecords.has(r.id) && !pendingDeletedDatasets.has(r.dataset_id)
+        (r) => !pendingDeletedRecords.has(r.id) && !pendingDeletedDatasets.has(r.dataset_id) && !isDemoItem(r)
       );
       currentStore.records = validRecords;
       hasChanges = true;
@@ -214,7 +256,7 @@ export async function syncWithBackend(): Promise<boolean> {
       hasChanges = true;
     }
     if (auditLogs && auditLogs.length > 0) {
-      currentStore.auditLogs = auditLogs;
+      currentStore.auditLogs = auditLogs.filter((a) => !isDemoItem(a));
       hasChanges = true;
     }
     if (users && users.length > 0) {
@@ -229,6 +271,7 @@ export async function syncWithBackend(): Promise<boolean> {
     const isLive = Boolean(syncRes || datasets || records || categories || users);
 
     if (hasChanges) {
+      saveStore();
       notify();
     }
 
