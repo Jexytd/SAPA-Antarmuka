@@ -49,8 +49,26 @@ import { MessageSquarePlus } from 'lucide-react';
 
 export default function CustomerServiceInboxPage() {
   const { user } = useAuth();
-  const currentAdminId = user?.id || 'admin-1';
-  const currentAdminName = user?.name || 'Petugas CS (BPS Bangka)';
+  const [admins, setAdmins] = useState<CsAdmin[]>([]);
+
+  // Resolve admin CS yang valid di database (misal 'admin-bps-1')
+  const effectiveAdmin = React.useMemo(() => {
+    const byId = admins.find((a) => a.id === user?.id);
+    if (byId) return { id: byId.id, name: byId.name };
+
+    const byEmail = admins.find((a) => a.email && user?.email && a.email.toLowerCase() === user.email.toLowerCase());
+    if (byEmail) return { id: byEmail.id, name: byEmail.name };
+
+    const byName = admins.find((a) => a.name && user?.name && a.name.toLowerCase().includes(user.name.toLowerCase()));
+    if (byName) return { id: byName.id, name: byName.name };
+
+    if (admins.length > 0) return { id: admins[0].id, name: admins[0].name };
+
+    return { id: 'admin-bps-1', name: user?.name || 'Admin Pelayanan BPS Bangka' };
+  }, [admins, user]);
+
+  const currentAdminId = effectiveAdmin.id;
+  const currentAdminName = effectiveAdmin.name;
 
   const [backendState, setBackendState] = useState<BackendConnectionState>(() => getBackendStatus());
   const [isRetrying, setIsRetrying] = useState(false);
@@ -67,7 +85,6 @@ export default function CustomerServiceInboxPage() {
   // Filters & Search
   const [activeTab, setActiveTab] = useState<TicketFilterTab>('WAITING');
   const [searchQuery, setSearchQuery] = useState('');
-  const [admins, setAdmins] = useState<CsAdmin[]>([]);
   const [settings, setSettings] = useState<CsSettings>({
     autoCloseMinutes: 15,
     soundEnabled: true,
@@ -305,7 +322,14 @@ export default function CustomerServiceInboxPage() {
         currentAdminId,
         currentAdminName
       );
-      if (res.success) {
+      if (res.success && res.ticket) {
+        setTickets((prev) =>
+          prev.map((t) => (t.id === selectedTicketId ? res.ticket! : t))
+        );
+        setSelectedTicketDetail((prev) =>
+          prev ? { ...prev, ticket: res.ticket! } : { ticket: res.ticket!, messages: [], events: [] }
+        );
+        setActiveTab('ACTIVE');
         setToast({ msg: 'Tiket berhasil diambil dan ditugaskan kepada Anda.', type: 'success' });
         fetchTickets();
         loadTicketDetail(selectedTicketId);
@@ -352,8 +376,8 @@ export default function CustomerServiceInboxPage() {
           )
         );
       }
-    } catch (err) {
-      setToast({ msg: 'Gagal mengirim pesan ke pengguna.', type: 'error' });
+    } catch (err: any) {
+      setToast({ msg: err?.message || 'Gagal mengirim pesan ke pengguna.', type: 'error' });
     } finally {
       setIsSendingMessage(false);
     }
@@ -364,13 +388,20 @@ export default function CustomerServiceInboxPage() {
     if (!selectedTicketId) return;
     try {
       const res = await ticketApi.pendingTicket(selectedTicketId, currentAdminId, reason);
-      if (res.success) {
+      if (res.success && res.ticket) {
+        setTickets((prev) =>
+          prev.map((t) => (t.id === selectedTicketId ? res.ticket! : t))
+        );
+        setSelectedTicketDetail((prev) =>
+          prev ? { ...prev, ticket: res.ticket! } : null
+        );
+        setActiveTab('PENDING');
         setToast({ msg: 'Status tiket berhasil diubah menjadi PENDING.', type: 'warning' });
         fetchTickets();
         loadTicketDetail(selectedTicketId);
       }
-    } catch (err) {
-      setToast({ msg: 'Gagal mengubah status pending.', type: 'error' });
+    } catch (err: any) {
+      setToast({ msg: err?.message || 'Gagal mengubah status pending.', type: 'error' });
     }
   };
 
@@ -379,13 +410,20 @@ export default function CustomerServiceInboxPage() {
     if (!selectedTicketId) return;
     try {
       const res = await ticketApi.resolveTicket(selectedTicketId, currentAdminId, notes);
-      if (res.success) {
+      if (res.success && res.ticket) {
+        setTickets((prev) =>
+          prev.map((t) => (t.id === selectedTicketId ? res.ticket! : t))
+        );
+        setSelectedTicketDetail((prev) =>
+          prev ? { ...prev, ticket: res.ticket! } : null
+        );
+        setActiveTab('RESOLVED');
         setToast({ msg: 'Tiket berhasil ditandai selesai (RESOLVED).', type: 'success' });
         fetchTickets();
         loadTicketDetail(selectedTicketId);
       }
-    } catch (err) {
-      setToast({ msg: 'Gagal menyelesaikan tiket.', type: 'error' });
+    } catch (err: any) {
+      setToast({ msg: err?.message || 'Gagal menyelesaikan tiket.', type: 'error' });
     }
   };
 
@@ -394,13 +432,19 @@ export default function CustomerServiceInboxPage() {
     if (!selectedTicketId) return;
     try {
       const res = await ticketApi.closeTicket(selectedTicketId, currentAdminId, reason);
-      if (res.success) {
+      if (res.success && res.ticket) {
+        setTickets((prev) =>
+          prev.map((t) => (t.id === selectedTicketId ? res.ticket! : t))
+        );
+        setSelectedTicketDetail((prev) =>
+          prev ? { ...prev, ticket: res.ticket! } : null
+        );
         setToast({ msg: 'Tiket ditutup. Mode pengguna kembali ke BOT otomatis.', type: 'success' });
         fetchTickets();
         loadTicketDetail(selectedTicketId);
       }
-    } catch (err) {
-      setToast({ msg: 'Gagal menutup tiket.', type: 'error' });
+    } catch (err: any) {
+      setToast({ msg: err?.message || 'Gagal menutup tiket.', type: 'error' });
     }
   };
 
@@ -409,13 +453,20 @@ export default function CustomerServiceInboxPage() {
     if (!selectedTicketId) return;
     try {
       const res = await ticketApi.releaseTicket(selectedTicketId, currentAdminId, reason);
-      if (res.success) {
+      if (res.success && res.ticket) {
+        setTickets((prev) =>
+          prev.map((t) => (t.id === selectedTicketId ? res.ticket! : t))
+        );
+        setSelectedTicketDetail((prev) =>
+          prev ? { ...prev, ticket: res.ticket! } : null
+        );
+        setActiveTab('WAITING');
         setToast({ msg: 'Tiket dikembalikan ke antrean WAITING.', type: 'success' });
         fetchTickets();
         loadTicketDetail(selectedTicketId);
       }
-    } catch (err) {
-      setToast({ msg: 'Gagal melepaskan tiket.', type: 'error' });
+    } catch (err: any) {
+      setToast({ msg: err?.message || 'Gagal melepaskan tiket.', type: 'error' });
     }
   };
 
@@ -429,13 +480,19 @@ export default function CustomerServiceInboxPage() {
         toAdminId,
         reason
       );
-      if (res.success) {
+      if (res.success && res.ticket) {
+        setTickets((prev) =>
+          prev.map((t) => (t.id === selectedTicketId ? res.ticket! : t))
+        );
+        setSelectedTicketDetail((prev) =>
+          prev ? { ...prev, ticket: res.ticket! } : null
+        );
         setToast({ msg: 'Tiket berhasil dialihkan ke petugas CS lain.', type: 'success' });
         fetchTickets();
         loadTicketDetail(selectedTicketId);
       }
-    } catch (err) {
-      setToast({ msg: 'Gagal mengalihkan tiket.', type: 'error' });
+    } catch (err: any) {
+      setToast({ msg: err?.message || 'Gagal mengalihkan tiket.', type: 'error' });
     }
   };
 

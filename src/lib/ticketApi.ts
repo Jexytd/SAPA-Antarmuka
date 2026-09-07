@@ -83,7 +83,7 @@ async function apiRequest<T>(
     if (res.status === 409) {
       const errJson = await res.json().catch(() => ({}));
       throw new TicketConflictError(
-        errJson.message || 'Maaf, tiket ini baru saja diambil oleh petugas admin lain.'
+        errJson.error || errJson.message || 'Maaf, tiket ini baru saja diambil oleh petugas admin lain.'
       );
     }
 
@@ -92,8 +92,10 @@ async function apiRequest<T>(
       return json;
     }
 
-    console.warn(`[TicketApi] HTTP ${res.status} pada ${fullUrl}`);
-    return { success: false, error: `HTTP ${res.status}` };
+    const errJson = await res.json().catch(() => ({}));
+    const errMsg = errJson.error || errJson.message || `HTTP ${res.status}`;
+    console.warn(`[TicketApi] HTTP ${res.status} pada ${fullUrl}:`, errMsg);
+    return { success: false, error: errMsg };
   } catch (err) {
     clearTimeout(timeoutId);
     if (err instanceof TicketConflictError) {
@@ -102,6 +104,16 @@ async function apiRequest<T>(
     // Network fail or server down -> mark as offline
     return { success: false, error: 'OFFLINE_FALLBACK' };
   }
+}
+
+/**
+ * Pastikan adminId yang dikirim adalah ID valid di tabel database CS admins (misal 'admin-bps-1')
+ */
+export function sanitizeAdminId(adminId?: string): string {
+  if (!adminId || adminId === 'user-1' || adminId === 'admin-1' || adminId.startsWith('user-')) {
+    return 'admin-bps-1';
+  }
+  return adminId;
 }
 
 // ============================================================
@@ -270,9 +282,10 @@ export const ticketApi = {
     adminId: string,
     assignedBy?: string
   ): Promise<{ success: boolean; ticket?: Ticket }> {
+    const validAdminId = sanitizeAdminId(adminId);
     const res = await apiRequest<any>(`/api/tickets/${id}/assign`, {
       method: 'POST',
-      body: JSON.stringify({ adminId, assignedBy }),
+      body: JSON.stringify({ adminId: validAdminId, assignedBy }),
     });
 
     if (res.success && res.data) {
@@ -280,19 +293,23 @@ export const ticketApi = {
       return { success: true, ticket: normalizeTicket(rawTicket) };
     }
 
+    if (res.error && res.error !== 'OFFLINE_FALLBACK') {
+      throw new Error(res.error);
+    }
+
     // Mock Fallback
     const target = mockTickets.find((t) => t.id === id);
     if (!target) throw new Error('Tiket tidak ditemukan');
 
     // Simulate 409 Conflict if taken by another admin
-    if (target.adminId && target.adminId !== adminId && target.status !== 'WAITING') {
+    if (target.adminId && target.adminId !== validAdminId && target.status !== 'WAITING') {
       throw new TicketConflictError(
         `Maaf, tiket #${target.ticketNumber} baru saja diambil oleh ${target.adminName || 'admin lain'}.`
       );
     }
 
-    const admin = mockAdmins.find((a) => a.id === adminId) || { name: 'Admin CS' };
-    target.adminId = adminId;
+    const admin = mockAdmins.find((a) => a.id === validAdminId) || { name: 'Admin CS' };
+    target.adminId = validAdminId;
     target.adminName = admin.name;
     target.status = 'ACTIVE';
     target.updatedAt = new Date().toISOString();
@@ -302,7 +319,7 @@ export const ticketApi = {
       ticketId: id,
       eventType: 'ASSIGNED',
       actorType: 'ADMIN',
-      actorId: adminId,
+      actorId: validAdminId,
       actorName: admin.name,
       notes: `Tiket diambil oleh ${admin.name}`,
       createdAt: new Date().toISOString(),
@@ -319,9 +336,10 @@ export const ticketApi = {
     id: string,
     data: { adminId: string; message: string; messageType?: 'TEXT' | 'IMAGE' | 'DOCUMENT' }
   ): Promise<{ success: boolean; message?: TicketMessage }> {
+    const validAdminId = sanitizeAdminId(data.adminId);
     const res = await apiRequest<any>(`/api/tickets/${id}/messages`, {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: JSON.stringify({ ...data, adminId: validAdminId }),
     });
 
     if (res.success && res.data) {
@@ -329,13 +347,17 @@ export const ticketApi = {
       return { success: true, message: normalizeMessage(rawMsg) };
     }
 
+    if (res.error && res.error !== 'OFFLINE_FALLBACK') {
+      throw new Error(res.error);
+    }
+
     // Mock Fallback
-    const admin = mockAdmins.find((a) => a.id === data.adminId);
+    const admin = mockAdmins.find((a) => a.id === validAdminId);
     const newMsg: TicketMessage = {
       id: `msg-${Date.now()}`,
       ticketId: id,
       senderType: 'ADMIN',
-      senderId: data.adminId,
+      senderId: validAdminId,
       senderName: admin?.name || 'Petugas CS',
       message: data.message,
       messageType: data.messageType || 'TEXT',
@@ -366,14 +388,19 @@ export const ticketApi = {
     adminId: string,
     reason?: string
   ): Promise<{ success: boolean; ticket?: Ticket }> {
+    const validAdminId = sanitizeAdminId(adminId);
     const res = await apiRequest<any>(`/api/tickets/${id}/pending`, {
       method: 'POST',
-      body: JSON.stringify({ adminId, reason }),
+      body: JSON.stringify({ adminId: validAdminId, reason }),
     });
 
     if (res.success && res.data) {
       const rawTicket = res.data.ticket || res.data;
       return { success: true, ticket: normalizeTicket(rawTicket) };
+    }
+
+    if (res.error && res.error !== 'OFFLINE_FALLBACK') {
+      throw new Error(res.error);
     }
 
     // Mock Fallback
@@ -383,7 +410,7 @@ export const ticketApi = {
       target.pendingReason = reason || 'Menunggu tindak lanjut seksi teknis';
       target.updatedAt = new Date().toISOString();
 
-      const admin = mockAdmins.find((a) => a.id === adminId);
+      const admin = mockAdmins.find((a) => a.id === validAdminId);
       mockEvents[id] = [
         ...(mockEvents[id] || []),
         {
@@ -391,7 +418,7 @@ export const ticketApi = {
           ticketId: id,
           eventType: 'PENDING',
           actorType: 'ADMIN',
-          actorId: adminId,
+          actorId: validAdminId,
           actorName: admin?.name || 'Admin CS',
           notes: `Tiket di-pending. Alasan: ${target.pendingReason}`,
           createdAt: new Date().toISOString(),
@@ -410,14 +437,19 @@ export const ticketApi = {
     adminId: string,
     notes?: string
   ): Promise<{ success: boolean; ticket?: Ticket }> {
+    const validAdminId = sanitizeAdminId(adminId);
     const res = await apiRequest<any>(`/api/tickets/${id}/resolve`, {
       method: 'POST',
-      body: JSON.stringify({ adminId, notes }),
+      body: JSON.stringify({ adminId: validAdminId, notes }),
     });
 
     if (res.success && res.data) {
       const rawTicket = res.data.ticket || res.data;
       return { success: true, ticket: normalizeTicket(rawTicket) };
+    }
+
+    if (res.error && res.error !== 'OFFLINE_FALLBACK') {
+      throw new Error(res.error);
     }
 
     // Mock Fallback
@@ -427,7 +459,7 @@ export const ticketApi = {
       target.resolveNotes = notes || 'Pertanyaan telah terjawab secara tuntas.';
       target.updatedAt = new Date().toISOString();
 
-      const admin = mockAdmins.find((a) => a.id === adminId);
+      const admin = mockAdmins.find((a) => a.id === validAdminId);
       mockEvents[id] = [
         ...(mockEvents[id] || []),
         {
@@ -435,7 +467,7 @@ export const ticketApi = {
           ticketId: id,
           eventType: 'RESOLVED',
           actorType: 'ADMIN',
-          actorId: adminId,
+          actorId: validAdminId,
           actorName: admin?.name || 'Admin CS',
           notes: `Tiket ditandai selesai. Catatan: ${target.resolveNotes}`,
           createdAt: new Date().toISOString(),
@@ -454,11 +486,12 @@ export const ticketApi = {
     closedById: string,
     closeReason?: string
   ): Promise<{ success: boolean; ticket?: Ticket }> {
+    const validAdminId = sanitizeAdminId(closedById);
     const res = await apiRequest<any>(`/api/tickets/${id}/close`, {
       method: 'POST',
       body: JSON.stringify({
         closedByType: 'ADMIN',
-        closedById,
+        closedById: validAdminId,
         closeReason,
       }),
     });
@@ -468,6 +501,10 @@ export const ticketApi = {
       return { success: true, ticket: normalizeTicket(rawTicket) };
     }
 
+    if (res.error && res.error !== 'OFFLINE_FALLBACK') {
+      throw new Error(res.error);
+    }
+
     // Mock Fallback
     const target = mockTickets.find((t) => t.id === id);
     if (target) {
@@ -475,7 +512,7 @@ export const ticketApi = {
       target.closeReason = closeReason || 'Percakapan ditutup oleh CS.';
       target.updatedAt = new Date().toISOString();
 
-      const admin = mockAdmins.find((a) => a.id === closedById);
+      const admin = mockAdmins.find((a) => a.id === validAdminId);
       mockEvents[id] = [
         ...(mockEvents[id] || []),
         {
@@ -483,7 +520,7 @@ export const ticketApi = {
           ticketId: id,
           eventType: 'CLOSED',
           actorType: 'ADMIN',
-          actorId: closedById,
+          actorId: validAdminId,
           actorName: admin?.name || 'Admin CS',
           notes: `Tiket ditutup permanen. Mode bot otomatis kembali aktif.`,
           createdAt: new Date().toISOString(),
@@ -502,14 +539,19 @@ export const ticketApi = {
     adminId: string,
     reason?: string
   ): Promise<{ success: boolean; ticket?: Ticket }> {
+    const validAdminId = sanitizeAdminId(adminId);
     const res = await apiRequest<any>(`/api/tickets/${id}/release`, {
       method: 'POST',
-      body: JSON.stringify({ adminId, reason }),
+      body: JSON.stringify({ adminId: validAdminId, reason }),
     });
 
     if (res.success && res.data) {
       const rawTicket = res.data.ticket || res.data;
       return { success: true, ticket: normalizeTicket(rawTicket) };
+    }
+
+    if (res.error && res.error !== 'OFFLINE_FALLBACK') {
+      throw new Error(res.error);
     }
 
     // Mock Fallback
@@ -528,7 +570,7 @@ export const ticketApi = {
           ticketId: id,
           eventType: 'RELEASED',
           actorType: 'ADMIN',
-          actorId: adminId,
+          actorId: validAdminId,
           notes: `Tiket dilepaskan oleh ${prevAdmin || 'CS'} kembali ke antrean Waiting. Alasan: ${reason || 'Perlu penanganan admin lain'}`,
           createdAt: new Date().toISOString(),
         },
@@ -547,14 +589,20 @@ export const ticketApi = {
     toAdminId: string,
     reason?: string
   ): Promise<{ success: boolean; ticket?: Ticket }> {
+    const validFromId = sanitizeAdminId(fromAdminId);
+    const validToId = toAdminId || 'admin-bps-2';
     const res = await apiRequest<any>(`/api/tickets/${id}/transfer`, {
       method: 'POST',
-      body: JSON.stringify({ fromAdminId, toAdminId, reason }),
+      body: JSON.stringify({ fromAdminId: validFromId, toAdminId: validToId, reason }),
     });
 
     if (res.success && res.data) {
       const rawTicket = res.data.ticket || res.data;
       return { success: true, ticket: normalizeTicket(rawTicket) };
+    }
+
+    if (res.error && res.error !== 'OFFLINE_FALLBACK') {
+      throw new Error(res.error);
     }
 
     // Mock Fallback
