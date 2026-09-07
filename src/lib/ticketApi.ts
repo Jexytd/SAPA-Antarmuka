@@ -104,28 +104,111 @@ async function apiRequest<T>(
   }
 }
 
+// ============================================================
+// Data Normalizer Functions (Backend Snake_case -> Frontend CamelCase)
+// ============================================================
+
+export function normalizeTicket(raw: any): Ticket {
+  if (!raw) return raw;
+  return {
+    id: String(raw.id || ''),
+    ticketNumber: String(raw.ticket_number || raw.ticketNumber || raw.id || ''),
+    customerPhone: String(raw.user_phone || raw.customerPhone || raw.phone || ''),
+    customerName: String(raw.user_name || raw.customerName || raw.name || 'Pengguna'),
+    status: (raw.status || 'WAITING') as any,
+    adminId: raw.assigned_to || raw.adminId || null,
+    adminName: raw.admin_name || raw.adminName || null,
+    priority: (raw.priority || 'NORMAL') as any,
+    unreadCount: Number(raw.unread_admin_count ?? raw.unreadCount ?? 0),
+    lastMessage: raw.last_message || raw.lastMessage || undefined,
+    lastMessageAt: raw.last_message_at || raw.lastMessageAt || raw.updated_at || raw.updatedAt || undefined,
+    pendingReason: raw.pending_reason || raw.pendingReason || undefined,
+    resolveNotes: raw.resolve_notes || raw.resolveNotes || undefined,
+    closeReason: raw.close_reason || raw.closeReason || undefined,
+    createdAt: raw.created_at || raw.createdAt || new Date().toISOString(),
+    updatedAt: raw.updated_at || raw.updatedAt || new Date().toISOString(),
+  };
+}
+
+export function normalizeMessage(raw: any): TicketMessage {
+  if (!raw) return raw;
+  return {
+    id: String(raw.id || ''),
+    ticketId: String(raw.ticket_id || raw.ticketId || ''),
+    senderType: (raw.sender_type || raw.senderType || 'SYSTEM') as any,
+    senderId: raw.sender_id || raw.senderId || undefined,
+    senderName: raw.sender_name || raw.senderName || undefined,
+    message: String(raw.message ?? raw.content ?? ''),
+    messageType: (raw.message_type || raw.messageType || 'TEXT') as any,
+    mediaUrl: raw.media_url || raw.mediaUrl || undefined,
+    isRead: Boolean(raw.is_read ?? raw.isRead ?? false),
+    createdAt: raw.created_at || raw.createdAt || new Date().toISOString(),
+  };
+}
+
+export function normalizeEvent(raw: any): TicketEvent {
+  if (!raw) return raw;
+  let notes = raw.notes;
+  if (!notes && raw.metadata) {
+    notes = typeof raw.metadata === 'string' ? raw.metadata : (raw.metadata.reason || raw.metadata.notes);
+  }
+  return {
+    id: String(raw.id || ''),
+    ticketId: String(raw.ticket_id || raw.ticketId || ''),
+    eventType: (raw.action || raw.eventType || 'STATUS_CHANGE') as any,
+    actorType: (raw.actor_type || raw.actorType || 'SYSTEM') as any,
+    actorId: raw.actor_id || raw.actorId || undefined,
+    actorName: raw.actor_name || raw.actorName || undefined,
+    notes: notes || undefined,
+    createdAt: raw.created_at || raw.createdAt || new Date().toISOString(),
+  };
+}
+
+export function normalizeAdmin(raw: any): CsAdmin {
+  if (!raw) return raw;
+  return {
+    id: String(raw.id || ''),
+    name: String(raw.name || raw.username || 'Petugas CS'),
+    email: raw.email || undefined,
+    role: raw.role || undefined,
+    isOnline: Boolean(raw.is_active ?? raw.isOnline ?? true),
+    activeTicketCount: raw.active_ticket_count ?? raw.activeTicketCount ?? 0,
+    avatarUrl: raw.avatar_url || raw.avatarUrl || undefined,
+  };
+}
+
 export const ticketApi = {
   /**
    * 1. GET /api/tickets
    */
   async getTickets(params?: TicketQueryParams): Promise<{ total: number; data: Ticket[] }> {
     const query = new URLSearchParams();
-    if (params?.status && params.status !== 'ALL') query.set('status', params.status);
-    if (params?.adminId) query.set('adminId', params.adminId);
+    // Hanya teruskan status jika bukan filter custom antarmuka
+    if (params?.status && params.status !== 'ALL' && params.status !== 'MY_TICKETS') {
+      query.set('status', params.status);
+    }
+    // Jangan filter adminId jika sedang di antrean WAITING atau ALL
+    if (params?.adminId && params.status === 'MY_TICKETS') {
+      query.set('adminId', params.adminId);
+    }
     if (params?.search) query.set('search', params.search);
     if (params?.limit) query.set('limit', String(params.limit));
     if (params?.offset) query.set('offset', String(params.offset));
 
-    const res = await apiRequest<Ticket[]>(`/api/tickets?${query.toString()}`);
-    if (res.success && res.data) {
-      return { total: res.total ?? res.data.length, data: res.data };
+    const res = await apiRequest<any[]>(`/api/tickets?${query.toString()}`);
+    if (res.success && Array.isArray(res.data)) {
+      let mapped = res.data.map(normalizeTicket);
+      if (params?.status === 'MY_TICKETS' && params.adminId) {
+        mapped = mapped.filter((t) => t.adminId === params.adminId && t.status !== 'CLOSED');
+      }
+      return { total: res.total ?? mapped.length, data: mapped };
     }
 
     // Mock Fallback
     let filtered = [...mockTickets];
     if (params?.status && params.status !== 'ALL') {
       if (params.status === 'MY_TICKETS') {
-        filtered = filtered.filter((t) => t.adminId === params.adminId);
+        filtered = filtered.filter((t) => t.adminId === params.adminId && t.status !== 'CLOSED');
       } else {
         filtered = filtered.filter((t) => t.status === params.status);
       }
@@ -148,16 +231,23 @@ export const ticketApi = {
       return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
     });
 
-    return { total: filtered.length, data: filtered };
+    return { total: filtered.length, data: filtered.map(normalizeTicket) };
   },
 
   /**
    * 2. GET /api/tickets/:id
    */
   async getTicketDetail(id: string): Promise<TicketDetailResponse> {
-    const res = await apiRequest<TicketDetailResponse>(`/api/tickets/${id}`);
+    const res = await apiRequest<any>(`/api/tickets/${id}`);
     if (res.success && res.data) {
-      return res.data;
+      const rawTicket = res.data.ticket || res.data;
+      const rawMessages = Array.isArray(res.data.messages) ? res.data.messages : [];
+      const rawEvents = Array.isArray(res.data.events) ? res.data.events : [];
+      return {
+        ticket: normalizeTicket(rawTicket),
+        messages: rawMessages.map(normalizeMessage),
+        events: rawEvents.map(normalizeEvent),
+      };
     }
 
     // Mock Fallback
@@ -180,13 +270,14 @@ export const ticketApi = {
     adminId: string,
     assignedBy?: string
   ): Promise<{ success: boolean; ticket?: Ticket }> {
-    const res = await apiRequest<{ ticket: Ticket }>(`/api/tickets/${id}/assign`, {
+    const res = await apiRequest<any>(`/api/tickets/${id}/assign`, {
       method: 'POST',
       body: JSON.stringify({ adminId, assignedBy }),
     });
 
     if (res.success && res.data) {
-      return { success: true, ticket: res.data.ticket };
+      const rawTicket = res.data.ticket || res.data;
+      return { success: true, ticket: normalizeTicket(rawTicket) };
     }
 
     // Mock Fallback
@@ -218,7 +309,7 @@ export const ticketApi = {
     };
     mockEvents[id] = [...(mockEvents[id] || []), newEvt];
 
-    return { success: true, ticket: target };
+    return { success: true, ticket: normalizeTicket(target) };
   },
 
   /**
@@ -228,13 +319,14 @@ export const ticketApi = {
     id: string,
     data: { adminId: string; message: string; messageType?: 'TEXT' | 'IMAGE' | 'DOCUMENT' }
   ): Promise<{ success: boolean; message?: TicketMessage }> {
-    const res = await apiRequest<{ message: TicketMessage }>(`/api/tickets/${id}/messages`, {
+    const res = await apiRequest<any>(`/api/tickets/${id}/messages`, {
       method: 'POST',
       body: JSON.stringify(data),
     });
 
     if (res.success && res.data) {
-      return { success: true, message: res.data.message };
+      const rawMsg = res.data.message || res.data;
+      return { success: true, message: normalizeMessage(rawMsg) };
     }
 
     // Mock Fallback
@@ -263,7 +355,7 @@ export const ticketApi = {
       }
     }
 
-    return { success: true, message: newMsg };
+    return { success: true, message: normalizeMessage(newMsg) };
   },
 
   /**
@@ -274,13 +366,14 @@ export const ticketApi = {
     adminId: string,
     reason?: string
   ): Promise<{ success: boolean; ticket?: Ticket }> {
-    const res = await apiRequest<{ ticket: Ticket }>(`/api/tickets/${id}/pending`, {
+    const res = await apiRequest<any>(`/api/tickets/${id}/pending`, {
       method: 'POST',
       body: JSON.stringify({ adminId, reason }),
     });
 
     if (res.success && res.data) {
-      return { success: true, ticket: res.data.ticket };
+      const rawTicket = res.data.ticket || res.data;
+      return { success: true, ticket: normalizeTicket(rawTicket) };
     }
 
     // Mock Fallback
@@ -306,7 +399,7 @@ export const ticketApi = {
       ];
     }
 
-    return { success: true, ticket: target };
+    return { success: true, ticket: normalizeTicket(target) };
   },
 
   /**
@@ -317,13 +410,14 @@ export const ticketApi = {
     adminId: string,
     notes?: string
   ): Promise<{ success: boolean; ticket?: Ticket }> {
-    const res = await apiRequest<{ ticket: Ticket }>(`/api/tickets/${id}/resolve`, {
+    const res = await apiRequest<any>(`/api/tickets/${id}/resolve`, {
       method: 'POST',
       body: JSON.stringify({ adminId, notes }),
     });
 
     if (res.success && res.data) {
-      return { success: true, ticket: res.data.ticket };
+      const rawTicket = res.data.ticket || res.data;
+      return { success: true, ticket: normalizeTicket(rawTicket) };
     }
 
     // Mock Fallback
@@ -349,7 +443,7 @@ export const ticketApi = {
       ];
     }
 
-    return { success: true, ticket: target };
+    return { success: true, ticket: normalizeTicket(target) };
   },
 
   /**
@@ -360,7 +454,7 @@ export const ticketApi = {
     closedById: string,
     closeReason?: string
   ): Promise<{ success: boolean; ticket?: Ticket }> {
-    const res = await apiRequest<{ ticket: Ticket }>(`/api/tickets/${id}/close`, {
+    const res = await apiRequest<any>(`/api/tickets/${id}/close`, {
       method: 'POST',
       body: JSON.stringify({
         closedByType: 'ADMIN',
@@ -370,7 +464,8 @@ export const ticketApi = {
     });
 
     if (res.success && res.data) {
-      return { success: true, ticket: res.data.ticket };
+      const rawTicket = res.data.ticket || res.data;
+      return { success: true, ticket: normalizeTicket(rawTicket) };
     }
 
     // Mock Fallback
@@ -396,7 +491,7 @@ export const ticketApi = {
       ];
     }
 
-    return { success: true, ticket: target };
+    return { success: true, ticket: normalizeTicket(target) };
   },
 
   /**
@@ -407,13 +502,14 @@ export const ticketApi = {
     adminId: string,
     reason?: string
   ): Promise<{ success: boolean; ticket?: Ticket }> {
-    const res = await apiRequest<{ ticket: Ticket }>(`/api/tickets/${id}/release`, {
+    const res = await apiRequest<any>(`/api/tickets/${id}/release`, {
       method: 'POST',
       body: JSON.stringify({ adminId, reason }),
     });
 
     if (res.success && res.data) {
-      return { success: true, ticket: res.data.ticket };
+      const rawTicket = res.data.ticket || res.data;
+      return { success: true, ticket: normalizeTicket(rawTicket) };
     }
 
     // Mock Fallback
@@ -439,7 +535,7 @@ export const ticketApi = {
       ];
     }
 
-    return { success: true, ticket: target };
+    return { success: true, ticket: normalizeTicket(target) };
   },
 
   /**
@@ -451,13 +547,14 @@ export const ticketApi = {
     toAdminId: string,
     reason?: string
   ): Promise<{ success: boolean; ticket?: Ticket }> {
-    const res = await apiRequest<{ ticket: Ticket }>(`/api/tickets/${id}/transfer`, {
+    const res = await apiRequest<any>(`/api/tickets/${id}/transfer`, {
       method: 'POST',
       body: JSON.stringify({ fromAdminId, toAdminId, reason }),
     });
 
     if (res.success && res.data) {
-      return { success: true, ticket: res.data.ticket };
+      const rawTicket = res.data.ticket || res.data;
+      return { success: true, ticket: normalizeTicket(rawTicket) };
     }
 
     // Mock Fallback
@@ -485,7 +582,7 @@ export const ticketApi = {
       ];
     }
 
-    return { success: true, ticket: target };
+    return { success: true, ticket: normalizeTicket(target) };
   },
 
   /**
@@ -518,9 +615,9 @@ export const ticketApi = {
    * 11. GET /api/cs/admins
    */
   async getAdmins(): Promise<CsAdmin[]> {
-    const res = await apiRequest<CsAdmin[]>('/api/cs/admins');
-    if (res.success && res.data) {
-      return res.data;
+    const res = await apiRequest<any[]>('/api/cs/admins');
+    if (res.success && Array.isArray(res.data)) {
+      return res.data.map(normalizeAdmin);
     }
     return mockAdmins;
   },
@@ -529,20 +626,34 @@ export const ticketApi = {
    * 12. GET & PUT /api/cs/settings
    */
   async getSettings(): Promise<CsSettings> {
-    const res = await apiRequest<CsSettings>('/api/cs/settings');
+    const res = await apiRequest<any>('/api/cs/settings');
     if (res.success && res.data) {
-      return res.data;
+      const d = res.data;
+      return {
+        autoCloseMinutes: Number(d.auto_close_inactive_minutes || d.autoCloseMinutes || 15),
+        soundEnabled: d.soundEnabled ?? true,
+        desktopNotification: d.desktopNotification ?? true,
+        greetingTemplate: d.greetingTemplate || 'Halo, saya {adminName} dari Pelayanan Statistik Terpadu (PST) BPS Kabupaten Bangka. Ada yang dapat kami bantu?',
+        awayMessage: d.awayMessage || undefined,
+      };
     }
     return mockSettings;
   },
 
   async updateSettings(settings: Partial<CsSettings>): Promise<CsSettings> {
-    const res = await apiRequest<CsSettings>('/api/cs/settings', {
+    const res = await apiRequest<any>('/api/cs/settings', {
       method: 'PUT',
       body: JSON.stringify(settings),
     });
     if (res.success && res.data) {
-      return res.data;
+      const d = res.data;
+      return {
+        autoCloseMinutes: Number(d.auto_close_inactive_minutes || d.autoCloseMinutes || 15),
+        soundEnabled: d.soundEnabled ?? true,
+        desktopNotification: d.desktopNotification ?? true,
+        greetingTemplate: d.greetingTemplate || 'Halo, saya {adminName} dari Pelayanan Statistik Terpadu (PST) BPS Kabupaten Bangka. Ada yang dapat kami bantu?',
+        awayMessage: d.awayMessage || undefined,
+      };
     }
     mockSettings = { ...mockSettings, ...settings };
     return mockSettings;

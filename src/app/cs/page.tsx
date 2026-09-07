@@ -17,6 +17,7 @@ import {
 } from '@/lib/repository';
 import {
   Ticket,
+  TicketStatus,
   TicketMessage,
   TicketEvent,
   TicketFilterTab,
@@ -24,7 +25,12 @@ import {
   CsSettings,
   RealtimeTicketEvent,
 } from '@/lib/ticketTypes';
-import { ticketApi, TicketConflictError } from '@/lib/ticketApi';
+import {
+  ticketApi,
+  TicketConflictError,
+  normalizeTicket,
+  normalizeMessage,
+} from '@/lib/ticketApi';
 import { useCsRealtime } from '@/lib/useCsRealtime';
 import { CsTicketList } from '@/components/cs/CsTicketList';
 import { CsChatRoom } from '@/components/cs/CsChatRoom';
@@ -91,15 +97,10 @@ export default function CustomerServiceInboxPage() {
   // Fetch Tickets List
   // ------------------------------------------------------------
   const fetchTickets = useCallback(async () => {
-    if (!getBackendStatus().isConnected) {
-      setTickets([]);
-      setIsLoadingTickets(false);
-      return;
-    }
+    setIsLoadingTickets(true);
     try {
+      // Ambil seluruh tiket (pencarian di-forward jika ada) agar tab count badge akurat
       const res = await ticketApi.getTickets({
-        status: activeTab,
-        adminId: currentAdminId,
         search: searchQuery,
       });
       setTickets(res.data);
@@ -108,7 +109,7 @@ export default function CustomerServiceInboxPage() {
     } finally {
       setIsLoadingTickets(false);
     }
-  }, [activeTab, currentAdminId, searchQuery]);
+  }, [searchQuery]);
 
   useEffect(() => {
     const unsub = subscribeBackendStatus((state) => {
@@ -117,19 +118,16 @@ export default function CustomerServiceInboxPage() {
         fetchTickets();
         ticketApi.getAdmins().then(setAdmins).catch(() => {});
         ticketApi.getSettings().then(setSettings).catch(() => {});
-      } else if (state.hasCheckedInitial) {
-        setTickets([]);
-        setSelectedTicketDetail(null);
-        setIsLoadingTickets(false);
       }
     });
 
+    // Panggil langsung saat inisialisasi komponen tanpa menunggu status dataset
+    fetchTickets();
+    ticketApi.getAdmins().then(setAdmins).catch(() => {});
+    ticketApi.getSettings().then(setSettings).catch(() => {});
+
     if (!getBackendStatus().hasCheckedInitial) {
-      syncWithBackend().finally(() => {
-        fetchTickets();
-      });
-    } else if (getBackendStatus().isConnected) {
-      fetchTickets();
+      syncWithBackend().catch(() => {});
     }
 
     return unsub;
@@ -177,40 +175,59 @@ export default function CustomerServiceInboxPage() {
     (event: RealtimeTicketEvent) => {
       console.log('[CS Realtime Event]:', event);
 
+      const rawData = event.data || {};
+      const ticketObj =
+        event.ticket ||
+        (rawData.ticket_number || rawData.ticketNumber ? normalizeTicket(rawData) : undefined);
+      const messageObj =
+        event.message ||
+        (rawData.message !== undefined || rawData.content !== undefined
+          ? normalizeMessage(rawData)
+          : undefined);
+      const ticketId = event.ticketId || rawData.ticketId || rawData.ticket_id || ticketObj?.id;
+      const adminId = event.adminId || rawData.adminId || rawData.assigned_to;
+      const adminName = event.adminName || rawData.adminName || rawData.admin_name;
+      const status = event.status || rawData.status;
+
       // Event: New Ticket Created
-      if (event.event === 'ticket.created' && event.ticket) {
-        setTickets((prev) => [event.ticket!, ...prev]);
-        setToast({
-          msg: `Tiket baru #${event.ticket.ticketNumber} masuk dari ${event.ticket.customerName}!`,
-          type: 'warning',
-        });
+      if (event.event === 'ticket.created') {
+        const targetTicket = ticketObj || (rawData.id ? normalizeTicket(rawData) : null);
+        if (targetTicket) {
+          setTickets((prev) => [targetTicket, ...prev.filter((t) => t.id !== targetTicket.id)]);
+          setToast({
+            msg: `Tiket baru #${targetTicket.ticketNumber} masuk dari ${targetTicket.customerName}!`,
+            type: 'warning',
+          });
+        } else {
+          fetchTickets();
+        }
       }
 
       // Event: Ticket Assigned
-      else if (event.event === 'ticket.assigned' && event.ticketId) {
+      else if (event.event === 'ticket.assigned' && ticketId) {
         setTickets((prev) =>
           prev.map((t) =>
-            t.id === event.ticketId
+            t.id === ticketId
               ? {
                   ...t,
-                  status: 'ACTIVE',
-                  adminId: event.adminId || t.adminId,
-                  adminName: event.adminName || t.adminName,
+                  status: 'ASSIGNED',
+                  adminId: adminId || t.adminId,
+                  adminName: adminName || t.adminName,
                 }
               : t
           )
         );
-        if (selectedTicketId === event.ticketId) {
-          loadTicketDetail(event.ticketId);
+        if (selectedTicketId === ticketId) {
+          loadTicketDetail(ticketId);
         }
       }
 
       // Event: New Message Incoming
-      else if (event.event === 'ticket.message' && event.message) {
-        const msg = event.message;
+      else if (event.event === 'ticket.message' && (messageObj || ticketId)) {
+        const msg = messageObj;
 
         // If currently open ticket
-        if (selectedTicketId === msg.ticketId) {
+        if (msg && selectedTicketId === msg.ticketId) {
           setSelectedTicketDetail((prev) => {
             if (!prev) return null;
             // Check deduplication
@@ -221,7 +238,7 @@ export default function CustomerServiceInboxPage() {
             };
           });
           ticketApi.markAsRead(msg.ticketId).catch(() => {});
-        } else {
+        } else if (msg) {
           // Increment unread count in ticket card
           setTickets((prev) =>
             prev.map((t) =>
@@ -235,20 +252,22 @@ export default function CustomerServiceInboxPage() {
                 : t
             )
           );
+        } else {
+          fetchTickets();
         }
       }
 
       // Event: Status Changed
-      else if (event.event === 'ticket.status_changed' && event.ticketId) {
+      else if (event.event === 'ticket.status_changed' && ticketId) {
         setTickets((prev) =>
           prev.map((t) =>
-            t.id === event.ticketId
-              ? { ...t, status: event.status || t.status }
+            t.id === ticketId
+              ? { ...t, status: (status || t.status) as TicketStatus }
               : t
           )
         );
-        if (selectedTicketId === event.ticketId) {
-          loadTicketDetail(event.ticketId);
+        if (selectedTicketId === ticketId) {
+          loadTicketDetail(ticketId);
         }
       }
 
@@ -259,8 +278,8 @@ export default function CustomerServiceInboxPage() {
         event.event === 'ticket.transferred'
       ) {
         fetchTickets();
-        if (selectedTicketId === event.ticketId) {
-          loadTicketDetail(event.ticketId);
+        if (selectedTicketId === ticketId) {
+          loadTicketDetail(ticketId);
         }
       }
     },
@@ -453,7 +472,7 @@ export default function CustomerServiceInboxPage() {
   };
 
   const activeTicket = selectedTicketDetail?.ticket || tickets.find((t) => t.id === selectedTicketId) || null;
-  const isOffline = backendState.hasCheckedInitial && !backendState.isConnected;
+  const isOffline = backendState.hasCheckedInitial && !backendState.isConnected && tickets.length === 0 && !isLoadingTickets;
 
   if (isOffline) {
     return (
@@ -471,9 +490,11 @@ export default function CustomerServiceInboxPage() {
             onRetry={async () => {
               setIsRetrying(true);
               try {
-                const live = await syncWithBackend();
-                if (live) {
-                  await fetchTickets();
+                const [live] = await Promise.all([
+                  syncWithBackend(),
+                  fetchTickets(),
+                ]);
+                if (live || tickets.length > 0) {
                   setToast({ msg: 'Server backend CS berhasil terhubung!', type: 'success' });
                 } else {
                   setToast({ msg: 'Server backend CS masih offline.', type: 'error' });

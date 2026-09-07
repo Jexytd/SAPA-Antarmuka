@@ -90,6 +90,38 @@ export function CsTicketList({
     }
   };
 
+  // Filter tiket sesuai tab aktif dan kata kunci pencarian
+  const displayedTickets = React.useMemo(() => {
+    return tickets.filter((t) => {
+      // Filter berdasarkan Tab
+      if (activeTab === 'WAITING') {
+        if (t.status !== 'WAITING') return false;
+      } else if (activeTab === 'MY_TICKETS') {
+        if (t.adminId !== currentAdminId || t.status === 'CLOSED') return false;
+      } else if (activeTab === 'ACTIVE') {
+        if (t.status !== 'ACTIVE' && t.status !== 'ASSIGNED') return false;
+      } else if (activeTab === 'PENDING') {
+        if (t.status !== 'PENDING') return false;
+      } else if (activeTab === 'RESOLVED') {
+        if (t.status !== 'RESOLVED') return false;
+      } else if (activeTab === 'CLOSED') {
+        if (t.status !== 'CLOSED') return false;
+      }
+
+      // Filter berdasarkan query pencarian
+      if (searchQuery) {
+        const q = searchQuery.toLowerCase();
+        const matchNum = (t.ticketNumber || '').toLowerCase().includes(q);
+        const matchName = (t.customerName || '').toLowerCase().includes(q);
+        const matchPhone = (t.customerPhone || '').includes(q);
+        const matchMsg = (t.lastMessage || '').toLowerCase().includes(q);
+        if (!matchNum && !matchName && !matchPhone && !matchMsg) return false;
+      }
+
+      return true;
+    });
+  }, [tickets, activeTab, currentAdminId, searchQuery]);
+
   return (
     <div className="cs-panel-left">
       {/* Header Panel Kiri */}
@@ -221,7 +253,7 @@ export function CsTicketList({
             <RefreshCw size={20} className="animate-spin text-blue-500" />
             <span>Memuat daftar tiket...</span>
           </div>
-        ) : tickets.length === 0 ? (
+        ) : displayedTickets.length === 0 ? (
           <div className="p-8 text-center text-xs text-slate-500 flex flex-col items-center justify-center gap-2 h-48">
             <Inbox size={32} className="text-slate-300" />
             <p className="font-semibold text-slate-700">Tidak ada tiket</p>
@@ -232,7 +264,7 @@ export function CsTicketList({
             </p>
           </div>
         ) : (
-          tickets.map((ticket) => {
+          displayedTickets.map((ticket) => {
             const isSelected = selectedTicketId === ticket.id;
             const statusConfig = TICKET_STATUS_CONFIG[ticket.status];
             const borderClass =
