@@ -140,8 +140,8 @@ export default function CustomerServiceInboxPage() {
         ticketApi.getAdmins().then((a) => {
           setAdmins(a);
           if (a.length > 0) setIsCsOnline(true);
-        }).catch(() => {});
-        ticketApi.getSettings().then(setSettings).catch(() => {});
+        }).catch(() => { });
+        ticketApi.getSettings().then(setSettings).catch(() => { });
       }
     });
 
@@ -150,11 +150,11 @@ export default function CustomerServiceInboxPage() {
     ticketApi.getAdmins().then((a) => {
       setAdmins(a);
       if (a.length > 0) setIsCsOnline(true);
-    }).catch(() => {});
-    ticketApi.getSettings().then(setSettings).catch(() => {});
+    }).catch(() => { });
+    ticketApi.getSettings().then(setSettings).catch(() => { });
 
     if (!getBackendStatus().hasCheckedInitial) {
-      syncWithBackend().catch(() => {});
+      syncWithBackend().catch(() => { });
     }
 
     return unsub;
@@ -170,7 +170,7 @@ export default function CustomerServiceInboxPage() {
         setSelectedTicketDetail(detail);
 
         // Reset unread counter on selection
-        ticketApi.markAsRead(ticketId).catch(() => {});
+        ticketApi.markAsRead(ticketId).catch(() => { });
         setTickets((prev) =>
           prev.map((t) => (t.id === ticketId ? { ...t, unreadCount: 0 } : t))
         );
@@ -211,7 +211,7 @@ export default function CustomerServiceInboxPage() {
             }
             return prev;
           });
-        }).catch(() => {});
+        }).catch(() => { });
       }
     }, 5000);
 
@@ -273,11 +273,11 @@ export default function CustomerServiceInboxPage() {
             prev.map((t) =>
               t.id === ticketId
                 ? {
-                    ...t,
-                    status: 'ASSIGNED',
-                    adminId: adminId || t.adminId,
-                    adminName: adminName || t.adminName,
-                  }
+                  ...t,
+                  status: 'ASSIGNED',
+                  adminId: adminId || t.adminId,
+                  adminName: adminName || t.adminName,
+                }
                 : t
             )
           );
@@ -303,7 +303,7 @@ export default function CustomerServiceInboxPage() {
                 messages: [...prev.messages, msg],
               };
             });
-            ticketApi.markAsRead(targetTid).catch(() => {});
+            ticketApi.markAsRead(targetTid).catch(() => { });
           }
 
           // Update ticket card preview and counter
@@ -311,11 +311,11 @@ export default function CustomerServiceInboxPage() {
             prev.map((t) =>
               t.id === targetTid
                 ? {
-                    ...t,
-                    lastMessage: msg.message,
-                    lastMessageAt: msg.createdAt,
-                    unreadCount: selectedTicketId === targetTid ? 0 : (t.unreadCount || 0) + 1,
-                  }
+                  ...t,
+                  lastMessage: msg.message,
+                  lastMessageAt: msg.createdAt,
+                  unreadCount: selectedTicketId === targetTid ? 0 : (t.unreadCount || 0) + 1,
+                }
                 : t
             )
           );
@@ -430,11 +430,11 @@ export default function CustomerServiceInboxPage() {
           prev.map((t) =>
             t.id === selectedTicketId
               ? {
-                  ...t,
-                  lastMessage: text,
-                  lastMessageAt: res.message!.createdAt,
-                  status: t.status === 'ASSIGNED' ? 'ACTIVE' : t.status,
-                }
+                ...t,
+                lastMessage: text,
+                lastMessageAt: res.message!.createdAt,
+                status: t.status === 'ASSIGNED' ? 'ACTIVE' : t.status,
+              }
               : t
           )
         );
@@ -592,7 +592,7 @@ export default function CustomerServiceInboxPage() {
   };
 
   const activeTicket = selectedTicketDetail?.ticket || tickets.find((t) => t.id === selectedTicketId) || null;
-  const isOffline = !isCsOnline && backendState.hasCheckedInitial && !backendState.isConnected && tickets.length === 0 && !isLoadingTickets;
+  const isOffline = backendState.hasCheckedInitial && !backendState.isConnected && tickets.length === 0 && !isLoadingTickets;
 
   if (isOffline) {
     return (
@@ -610,15 +610,11 @@ export default function CustomerServiceInboxPage() {
             onRetry={async () => {
               setIsRetrying(true);
               try {
-                const [live, ticketsRes, adminsRes] = await Promise.all([
+                const [live] = await Promise.all([
                   syncWithBackend(),
-                  ticketApi.getTickets().catch(() => ({ data: [] })),
-                  ticketApi.getAdmins().catch(() => []),
+                  fetchTickets(),
                 ]);
-                if (live || (ticketsRes.data && ticketsRes.data.length > 0) || adminsRes.length > 0) {
-                  setIsCsOnline(true);
-                  if (ticketsRes.data) setTickets(ticketsRes.data);
-                  if (adminsRes.length > 0) setAdmins(adminsRes);
+                if (live || tickets.length > 0) {
                   setToast({ msg: 'Server backend CS berhasil terhubung!', type: 'success' });
                 } else {
                   setToast({ msg: 'Server backend CS masih offline.', type: 'error' });

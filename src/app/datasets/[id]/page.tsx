@@ -207,6 +207,7 @@ export default function DatasetDetailPage() {
 
   const handleDeleteRecord = async (recordId: string) => {
     if (!user) return;
+    setConfirmAction(null);
     await RecordRepo.delete(recordId, user.id, user.name);
     loadData();
     setToast({ msg: 'Data berhasil dihapus.', type: 'success' });
@@ -314,7 +315,11 @@ export default function DatasetDetailPage() {
               </Button>
               <Button
                 variant={confirmAction.variant === 'danger' ? 'danger' : 'primary'}
-                onClick={confirmAction.action}
+                onClick={() => {
+                  const act = confirmAction.action;
+                  setConfirmAction(null);
+                  act();
+                }}
               >
                 {confirmAction.confirmLabel}
               </Button>
@@ -942,7 +947,10 @@ function DataTab({
                       setConfirmAction({
                         title: 'Hapus baris data ini?',
                         description: `Data "${rec.indicator}" untuk periode ${rec.period} (${formatNumber(rec.value)} ${rec.unit || dataset.unit}) akan dihapus dari dataset.`,
-                        action: () => onDeleteRecord(rec.id),
+                        action: () => {
+                          setConfirmAction(null);
+                          onDeleteRecord(rec.id);
+                        },
                         variant: 'danger',
                         confirmLabel: 'Hapus Data',
                       })
