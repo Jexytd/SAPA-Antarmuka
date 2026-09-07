@@ -14,7 +14,7 @@ interface UseCsRealtimeOptions {
 }
 
 // ============================================================
-// Web Audio Chime Synthesizer (No external mp3 needed, zero latency)
+// Web Audio Chime Synthesizer (Zero external latency)
 // ============================================================
 let audioCtx: AudioContext | null = null;
 
@@ -32,16 +32,12 @@ function getAudioContext(): AudioContext | null {
   return audioCtx;
 }
 
-/**
- * Play pleasant chime for new ticket arrival
- */
 export function playNewTicketSound() {
   try {
     const ctx = getAudioContext();
     if (!ctx) return;
     const now = ctx.currentTime;
 
-    // Note 1: E5 (659.25 Hz)
     const osc1 = ctx.createOscillator();
     const gain1 = ctx.createGain();
     osc1.type = 'sine';
@@ -53,7 +49,6 @@ export function playNewTicketSound() {
     osc1.start(now);
     osc1.stop(now + 0.35);
 
-    // Note 2: B5 (987.77 Hz)
     const osc2 = ctx.createOscillator();
     const gain2 = ctx.createGain();
     osc2.type = 'sine';
@@ -69,9 +64,6 @@ export function playNewTicketSound() {
   }
 }
 
-/**
- * Play subtle pop chime for new message
- */
 export function playNewMessageSound() {
   try {
     const ctx = getAudioContext();
@@ -94,11 +86,16 @@ export function playNewMessageSound() {
 }
 
 // ============================================================
-// URL Resolver for WebSocket & SSE
+// URL Resolvers
 // ============================================================
 function getWebSocketUrl(): string {
   try {
-    const url = new URL(RAW_API_URL);
+    const raw = (
+      process.env.NEXT_PUBLIC_API_URL ||
+      process.env.NEXT_PUBLIC_BACKEND_URL ||
+      'http://localhost:8000'
+    ).replace(/\/$/, '');
+    const url = new URL(raw);
     const wsProto = url.protocol === 'https:' ? 'wss:' : 'ws:';
     return `${wsProto}//${url.host}/ws/cs`;
   } catch {
@@ -107,194 +104,344 @@ function getWebSocketUrl(): string {
 }
 
 function getSseUrl(): string {
-  const sep = RAW_API_URL.includes('?') ? '&' : '?';
-  return `${RAW_API_URL}/api/cs/events${sep}ngrok-skip-browser-warning=true`;
+  const raw = (
+    process.env.NEXT_PUBLIC_API_URL ||
+    process.env.NEXT_PUBLIC_BACKEND_URL ||
+    'http://localhost:8000'
+  ).replace(/\/$/, '');
+  const sep = raw.includes('?') ? '&' : '?';
+  return `${raw}/api/cs/events${sep}ngrok-skip-browser-warning=true`;
 }
 
 // ============================================================
-// Main React Hook
+// Persistent Singleton Connection Manager
+// Menjamin koneksi WebSocket persisten di client, kebal terhadap
+// StrictMode unmount-remount, dan tidak melakukan disconnect prematur.
 // ============================================================
-export function useCsRealtime(options: UseCsRealtimeOptions = {}) {
-  const { onEvent, enabled = true } = options;
+class CsRealtimeManager {
+  private ws: WebSocket | null = null;
+  private sse: EventSource | null = null;
+  private eventSubscribers = new Set<(event: RealtimeTicketEvent) => void>();
+  private statusSubscribers = new Set<(status: RealtimeStatus) => void>();
+  private status: RealtimeStatus = 'CONNECTING';
 
-  const [status, setStatus] = useState<RealtimeStatus>('CONNECTING');
-  const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
-  const [lastEventTime, setLastEventTime] = useState<Date | null>(null);
+  private pingTimer: NodeJS.Timeout | null = null;
+  private reconnectTimer: NodeJS.Timeout | null = null;
+  private disconnectDebounceTimer: NodeJS.Timeout | null = null;
+  private reconnectAttempts = 0;
 
-  const wsRef = useRef<WebSocket | null>(null);
-  const sseRef = useRef<EventSource | null>(null);
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const reconnectAttemptsRef = useRef<number>(0);
-  const isComponentMounted = useRef<boolean>(true);
+  public getStatus(): RealtimeStatus {
+    return this.status;
+  }
 
-  // Initialize sound preference from localStorage
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem('sapa_cs_sound_enabled');
-      if (stored !== null) {
-        setSoundEnabled(stored === 'true');
-      }
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  const toggleSound = useCallback(() => {
-    setSoundEnabled((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem('sapa_cs_sound_enabled', String(next));
-      } catch {
-        // ignore
-      }
-      return next;
+  private setStatus(newStatus: RealtimeStatus) {
+    this.status = newStatus;
+    this.statusSubscribers.forEach((cb) => {
+      try { cb(newStatus); } catch {}
     });
-  }, []);
+  }
 
-  const handleIncomingPayload = useCallback(
-    (payload: RealtimeTicketEvent) => {
-      setLastEventTime(new Date());
+  public subscribe(
+    onEvent?: (event: RealtimeTicketEvent) => void,
+    onStatus?: (status: RealtimeStatus) => void
+  ): () => void {
+    // Batalkan rencana disconnect jika komponen remount (misal React StrictMode)
+    if (this.disconnectDebounceTimer) {
+      clearTimeout(this.disconnectDebounceTimer);
+      this.disconnectDebounceTimer = null;
+    }
 
-      // Audio notification trigger
-      if (soundEnabled) {
-        if (payload.event === 'ticket.created') {
-          playNewTicketSound();
-        } else if (payload.event === 'ticket.message') {
-          playNewMessageSound();
-        }
+    if (onEvent) this.eventSubscribers.add(onEvent);
+    if (onStatus) {
+      this.statusSubscribers.add(onStatus);
+      onStatus(this.status);
+    }
+
+    this.connect();
+
+    return () => {
+      if (onEvent) this.eventSubscribers.delete(onEvent);
+      if (onStatus) this.statusSubscribers.delete(onStatus);
+
+      // Jika tidak ada listener yang tersisa, jadwalkan disconnect dengan jeda 2 detik
+      // agar navigasi halaman atau StrictMode re-render tidak memutuskan koneksi seketika.
+      if (this.eventSubscribers.size === 0 && this.statusSubscribers.size === 0) {
+        if (this.disconnectDebounceTimer) clearTimeout(this.disconnectDebounceTimer);
+        this.disconnectDebounceTimer = setTimeout(() => {
+          if (this.eventSubscribers.size === 0 && this.statusSubscribers.size === 0) {
+            this.disconnect();
+          }
+        }, 2000);
       }
+    };
+  }
 
-      if (onEvent) {
-        onEvent(payload);
+  public connect(force = false) {
+    if (typeof window === 'undefined') return;
+
+    // Jika socket sudah aktif terhubung atau sedang proses handshake, jangan diinterupsi!
+    if (!force && this.ws) {
+      if (this.ws.readyState === WebSocket.OPEN) {
+        this.setStatus('CONNECTED');
+        return;
       }
-    },
-    [onEvent, soundEnabled]
-  );
+      if (this.ws.readyState === WebSocket.CONNECTING) {
+        this.setStatus('CONNECTING');
+        return;
+      }
+    }
 
-  // Setup SSE Fallback
-  const startSseFallback = useCallback(() => {
-    if (!isComponentMounted.current) return;
-    if (sseRef.current) sseRef.current.close();
+    // Bersihkan instance lama dengan aman tanpa memicu event close liar
+    this.cleanupSocket();
 
-    const sseUrl = getSseUrl();
+    const wsUrl = getWebSocketUrl();
+    this.setStatus('CONNECTING');
+    console.log('[Realtime WS] Menghubungkan ke:', wsUrl);
+
     try {
-      console.log('[Realtime SSE] Connecting to:', sseUrl);
+      const ws = new WebSocket(wsUrl);
+      this.ws = ws;
+
+      ws.onopen = () => {
+        if (this.ws !== ws) return;
+        console.log('[Realtime WS] Terhubung sukses (OPEN).');
+        this.setStatus('CONNECTED');
+        this.reconnectAttempts = 0;
+
+        // Matikan SSE fallback jika sebelumnya aktif
+        this.closeSSE();
+
+        // Kirim initial handshake
+        try {
+          ws.send(JSON.stringify({ action: 'cs_subscribe', timestamp: Date.now() }));
+        } catch {}
+
+        // Heartbeat ping setiap 25 detik
+        this.startHeartbeat(ws);
+      };
+
+      ws.onmessage = (event) => {
+        if (this.ws !== ws) return;
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'pong' || data.event === 'pong' || data.event === 'connected' || data.event === 'subscribed') {
+            return; // System messages
+          }
+          this.broadcastEvent(data as RealtimeTicketEvent);
+        } catch {}
+      };
+
+      ws.onclose = (event) => {
+        // Abaikan jika event close berasal dari socket lama yang sudah diganti
+        if (this.ws !== ws) return;
+
+        this.stopHeartbeat();
+        console.warn(`[Realtime WS] Terputus. Kode: ${event.code}, Alasan: ${event.reason || 'none'}`);
+
+        // Jika tidak ada komponen yang subscribe, jangan reconnect
+        if (this.eventSubscribers.size === 0 && this.statusSubscribers.size === 0) {
+          return;
+        }
+
+        // Jika ditutup normal oleh client (1000), jangan auto-reconnect
+        if (event.code === 1000 && event.reason === 'Intentional disconnect') {
+          return;
+        }
+
+        this.reconnectAttempts++;
+        const backoff = Math.min(1500 * Math.pow(1.5, this.reconnectAttempts - 1), 15000);
+        this.setStatus('RECONNECTING');
+
+        if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = setTimeout(() => {
+          this.connect(true);
+        }, backoff);
+
+        // Jika WS gagal beberapa kali, aktifkan SSE paralel sebagai cadangan
+        if (this.reconnectAttempts >= 3 && !this.sse) {
+          console.info('[Realtime] Mengaktifkan SSE Stream sebagai cadangan sekunder...');
+          this.startSSE();
+        }
+      };
+
+      ws.onerror = (err) => {
+        if (this.ws !== ws) return;
+        console.warn('[Realtime WS] Terjadi galat koneksi:', err);
+      };
+    } catch (err) {
+      console.error('[Realtime WS] Gagal inisialisasi socket:', err);
+      this.startSSE();
+    }
+  }
+
+  private startHeartbeat(ws: WebSocket) {
+    this.stopHeartbeat();
+    this.pingTimer = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
+        } catch {}
+      }
+    }, 25000);
+  }
+
+  private stopHeartbeat() {
+    if (this.pingTimer) {
+      clearInterval(this.pingTimer);
+      this.pingTimer = null;
+    }
+  }
+
+  private cleanupSocket() {
+    this.stopHeartbeat();
+    if (this.ws) {
+      const oldWs = this.ws;
+      this.ws = null;
+      // Lepas event listener agar penutupan tidak memicu callback close berantai
+      oldWs.onopen = null;
+      oldWs.onmessage = null;
+      oldWs.onerror = null;
+      oldWs.onclose = null;
+      try {
+        if (oldWs.readyState === WebSocket.OPEN) {
+          oldWs.close(1000, 'Replaced');
+        } else if (oldWs.readyState === WebSocket.CONNECTING) {
+          oldWs.onopen = () => {
+            try { oldWs.close(1000, 'Replaced while connecting'); } catch {}
+          };
+        }
+      } catch {}
+    }
+  }
+
+  public disconnect() {
+    this.cleanupSocket();
+    this.closeSSE();
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.setStatus('OFFLINE');
+  }
+
+  private broadcastEvent(payload: RealtimeTicketEvent) {
+    this.eventSubscribers.forEach((cb) => {
+      try { cb(payload); } catch (err) {
+        console.warn('[Realtime Event Handler Error]', err);
+      }
+    });
+  }
+
+  private startSSE() {
+    this.closeSSE();
+    try {
+      const sseUrl = getSseUrl();
       const source = new EventSource(sseUrl);
-      sseRef.current = source;
-      setStatus('FALLBACK_SSE');
+      this.sse = source;
 
       source.onopen = () => {
-        if (isComponentMounted.current) {
-          console.log('[Realtime SSE] Connected to SSE stream.');
-          setStatus('FALLBACK_SSE');
+        console.log('[Realtime SSE] Stream terhubung.');
+        if (this.status !== 'CONNECTED') {
+          this.setStatus('FALLBACK_SSE');
         }
       };
 
       source.onmessage = (e) => {
         try {
-          const parsed: RealtimeTicketEvent = JSON.parse(e.data);
-          handleIncomingPayload(parsed);
-        } catch {
-          // parse error
-        }
+          const parsed = JSON.parse(e.data);
+          this.broadcastEvent(parsed as RealtimeTicketEvent);
+        } catch {}
       };
 
-      source.onerror = (err) => {
-        console.warn('[Realtime SSE] Connection interrupted:', err);
+      source.onerror = () => {
         source.close();
-        if (isComponentMounted.current) {
-          setStatus('OFFLINE');
-          // Try reconnecting after 5s
-          reconnectTimeoutRef.current = setTimeout(() => {
-            connectWebSocket();
-          }, 5000);
+        this.sse = null;
+        if (this.status === 'FALLBACK_SSE') {
+          this.setStatus('OFFLINE');
         }
       };
     } catch (err) {
-      console.error('[Realtime SSE] Init error:', err);
-      setStatus('OFFLINE');
+      console.error('[Realtime SSE Error]', err);
     }
-  }, [handleIncomingPayload]);
+  }
 
-  // Connect WebSocket
-  const connectWebSocket = useCallback(() => {
-    if (!enabled || !isComponentMounted.current) return;
-
-    if (wsRef.current) {
-      wsRef.current.close();
-      wsRef.current = null;
+  private closeSSE() {
+    if (this.sse) {
+      try { this.sse.close(); } catch {}
+      this.sse = null;
     }
+  }
+}
 
-    const wsUrl = getWebSocketUrl();
-    setStatus('CONNECTING');
+const realtimeManager = new CsRealtimeManager();
 
-    try {
-      console.log('[Realtime WS] Attempting connection to:', wsUrl);
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
+// ============================================================
+// React Hook
+// ============================================================
+export function useCsRealtime(options: UseCsRealtimeOptions = {}) {
+  const { onEvent, enabled = true } = options;
 
-      ws.onopen = () => {
-        if (!isComponentMounted.current) return;
-        console.log('[Realtime WS] Connected successfully.');
-        setStatus('CONNECTED');
-        reconnectAttemptsRef.current = 0;
-        // Send initial auth / handshake if needed
-        ws.send(JSON.stringify({ action: 'cs_subscribe', timestamp: Date.now() }));
-      };
+  const [status, setStatus] = useState<RealtimeStatus>(() => realtimeManager.getStatus());
+  const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
+  const [lastEventTime, setLastEventTime] = useState<Date | null>(null);
 
-      ws.onmessage = (event) => {
-        if (!isComponentMounted.current) return;
-        try {
-          const data: RealtimeTicketEvent = JSON.parse(event.data);
-          handleIncomingPayload(data);
-        } catch {
-          // Non-json or ping
-        }
-      };
+  const onEventRef = useRef(onEvent);
+  useEffect(() => {
+    onEventRef.current = onEvent;
+  }, [onEvent]);
 
-      ws.onclose = (event) => {
-        if (!isComponentMounted.current) return;
-        console.warn(`[Realtime WS] Closed (code: ${event.code}).`);
-
-        const attempts = reconnectAttemptsRef.current + 1;
-        reconnectAttemptsRef.current = attempts;
-
-        if (attempts <= 1) {
-          setStatus('RECONNECTING');
-          reconnectTimeoutRef.current = setTimeout(() => {
-            connectWebSocket();
-          }, 1500);
-        } else {
-          console.info('[Realtime] Switching to SSE stream fallback...');
-          startSseFallback();
-        }
-      };
-
-      ws.onerror = (err) => {
-        console.warn('[Realtime WS] Error occurred:', err);
-      };
-    } catch {
-      startSseFallback();
-    }
-  }, [enabled, handleIncomingPayload, startSseFallback]);
+  const soundEnabledRef = useRef(soundEnabled);
+  useEffect(() => {
+    soundEnabledRef.current = soundEnabled;
+  }, [soundEnabled]);
 
   useEffect(() => {
-    isComponentMounted.current = true;
-    connectWebSocket();
+    try {
+      const stored = localStorage.getItem('sapa_cs_sound_enabled');
+      if (stored !== null) setSoundEnabled(stored === 'true');
+    } catch {}
+  }, []);
 
-    return () => {
-      isComponentMounted.current = false;
-      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
-      if (wsRef.current) wsRef.current.close();
-      if (sseRef.current) sseRef.current.close();
-    };
-  }, [connectWebSocket]);
+  const toggleSound = useCallback(() => {
+    setSoundEnabled((prev) => {
+      const next = !prev;
+      try { localStorage.setItem('sapa_cs_sound_enabled', String(next)); } catch {}
+      return next;
+    });
+  }, []);
+
+  const handleIncomingPayload = useCallback((payload: RealtimeTicketEvent) => {
+    setLastEventTime(new Date());
+
+    if (soundEnabledRef.current) {
+      if (payload.event === 'ticket.created') {
+        playNewTicketSound();
+      } else if (payload.event === 'ticket.message') {
+        playNewMessageSound();
+      }
+    }
+
+    if (onEventRef.current) {
+      onEventRef.current(payload);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!enabled) return;
+
+    const unsubscribe = realtimeManager.subscribe(
+      handleIncomingPayload,
+      (newStatus) => setStatus(newStatus)
+    );
+
+    return unsubscribe;
+  }, [enabled, handleIncomingPayload]);
 
   return {
     status,
     soundEnabled,
     toggleSound,
     lastEventTime,
-    reconnect: connectWebSocket,
+    reconnect: () => realtimeManager.connect(true),
   };
 }
